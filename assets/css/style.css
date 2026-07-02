@@ -1686,6 +1686,21 @@ fieldset {
   }
 }
 
+@media (max-width: 61.99rem) {
+  /*
+   * Safari's large viewport keeps the visual hero extending behind the
+   * floating browser toolbar, while the footer is lifted into a safe zone.
+   */
+  .hero {
+    min-height: 100vh;
+    min-height: 100lvh;
+  }
+
+  .hero__footer {
+    bottom: max(5.25rem, calc(1.5rem + env(safe-area-inset-bottom)));
+  }
+}
+
 @media (min-width: 62rem) {
   .site-header {
     height: 6rem;
@@ -1943,8 +1958,7 @@ fieldset {
     height: -webkit-fill-available;
   }
 
-  body,
-  .hero {
+  body {
     min-height: -webkit-fill-available;
   }
 
