@@ -1,0 +1,12 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+.wrangler/
+wrangler.toml
+wrangler.json
+wrangler.jsonc
+map-calibrator.html
+.env
