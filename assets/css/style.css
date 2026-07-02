@@ -18,12 +18,21 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  min-height: 100%;
+}
+
 html {
+  background: var(--paper);
   scroll-behavior: smooth;
   scroll-padding-top: 5rem;
 }
 
 body {
+  min-height: 100vh;
+  min-height: 100svh;
+  min-height: 100dvh;
   margin: 0;
   overflow-x: hidden;
   background: var(--paper);
@@ -101,7 +110,11 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: env(safe-area-inset-top) var(--page-pad) 0;
+  padding:
+    env(safe-area-inset-top)
+    max(var(--page-pad), env(safe-area-inset-right))
+    0
+    max(var(--page-pad), env(safe-area-inset-left));
   color: var(--chalk);
   transition:
     height 450ms var(--ease),
@@ -113,9 +126,9 @@ a {
 .site-header::after {
   content: "";
   position: absolute;
-  right: var(--page-pad);
+  right: max(var(--page-pad), env(safe-area-inset-right));
   bottom: 0;
-  left: var(--page-pad);
+  left: max(var(--page-pad), env(safe-area-inset-left));
   height: 1px;
   background: currentColor;
   opacity: 0.2;
@@ -217,6 +230,7 @@ a {
   inset: 0;
   width: 100vw;
   height: 100vh;
+  height: 100svh;
   height: 100dvh;
   max-width: none;
   max-height: none;
@@ -294,7 +308,9 @@ a {
 
 .hero {
   position: relative;
+  min-height: 100vh;
   min-height: 100svh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -421,9 +437,9 @@ a {
 .hero__footer {
   position: absolute;
   z-index: 1;
-  right: var(--page-pad);
-  bottom: 1.5rem;
-  left: var(--page-pad);
+  right: max(var(--page-pad), env(safe-area-inset-right));
+  bottom: max(1.5rem, calc(0.75rem + env(safe-area-inset-bottom)));
+  left: max(var(--page-pad), env(safe-area-inset-left));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1919,6 +1935,21 @@ fieldset {
     width: 100%;
     max-width: 100%;
     height: auto;
+  }
+}
+
+@supports (-webkit-touch-callout: none) and (not (height: 100dvh)) {
+  html {
+    height: -webkit-fill-available;
+  }
+
+  body,
+  .hero {
+    min-height: -webkit-fill-available;
+  }
+
+  .site-menu {
+    height: -webkit-fill-available;
   }
 }
 
