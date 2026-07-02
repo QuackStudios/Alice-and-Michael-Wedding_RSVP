@@ -38,6 +38,7 @@ body {
 
 body.menu-open {
   overflow: hidden;
+  overscroll-behavior: none;
 }
 
 ::selection {
@@ -96,11 +97,11 @@ a {
   top: 0;
   left: 0;
   width: 100%;
-  height: 5rem;
+  height: calc(5rem + env(safe-area-inset-top));
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 var(--page-pad);
+  padding: env(safe-area-inset-top) var(--page-pad) 0;
   color: var(--chalk);
   transition:
     height 450ms var(--ease),
@@ -122,7 +123,7 @@ a {
 
 .site-header.is-scrolled,
 .site-header.menu-active {
-  height: 4.4rem;
+  height: calc(4.4rem + env(safe-area-inset-top));
   border-color: var(--line);
   background: rgba(247, 243, 236, 0.94);
   color: var(--ink);
@@ -130,7 +131,9 @@ a {
 }
 
 .site-header.menu-active {
-  background: var(--paper);
+  z-index: 9000;
+  background: transparent;
+  backdrop-filter: none;
 }
 
 .wordmark {
@@ -156,10 +159,12 @@ a {
 .menu-button {
   position: relative;
   z-index: 2;
+  min-height: 2.75rem;
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 0.7rem;
-  padding: 0;
+  padding: 0.5rem 0 0.5rem 0.5rem;
   border: 0;
   background: transparent;
   cursor: pointer;
@@ -210,25 +215,39 @@ a {
   position: fixed;
   z-index: 1;
   inset: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
-  gap: 0.35rem;
-  padding: 7rem var(--page-pad) 3rem;
+  gap: clamp(0.8rem, 2.1vh, 1.35rem);
+  padding:
+    calc(4.75rem + max(1.5rem, env(safe-area-inset-top)))
+    max(var(--page-pad), calc(1.25rem + env(safe-area-inset-right)))
+    max(3.5rem, calc(2rem + env(safe-area-inset-bottom)))
+    max(var(--page-pad), calc(1.25rem + env(safe-area-inset-left)));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   visibility: hidden;
   opacity: 0;
   background: var(--paper);
   color: var(--ink);
-  transition: visibility 0s linear 600ms, opacity 400ms ease;
+  pointer-events: none;
+  transition: visibility 0s linear 400ms, opacity 400ms ease;
 }
 
 .site-menu::after {
   content: "Alice & Michael  —  Wedding Celebration";
   position: absolute;
-  right: var(--page-pad);
-  bottom: 2rem;
-  left: var(--page-pad);
+  right: max(var(--page-pad), calc(1.25rem + env(safe-area-inset-right)));
+  bottom: max(1.5rem, env(safe-area-inset-bottom));
+  left: max(var(--page-pad), calc(1.25rem + env(safe-area-inset-left)));
   padding-top: 1rem;
   border-top: 1px solid var(--line);
   color: var(--ink-soft);
@@ -240,14 +259,15 @@ a {
 .site-menu.is-open {
   visibility: visible;
   opacity: 1;
+  pointer-events: auto;
   transition: visibility 0s, opacity 400ms ease;
 }
 
 .site-menu > a:not(.site-menu__rsvp) {
   display: block;
   font-family: var(--serif);
-  font-size: clamp(2.6rem, 13vw, 5.2rem);
-  line-height: 1.08;
+  font-size: clamp(2.4rem, 11vw, 4.75rem);
+  line-height: 1;
   transform: translateY(2rem);
   opacity: 0;
   transition: transform 550ms var(--ease), opacity 400ms ease;
@@ -1639,6 +1659,7 @@ fieldset {
 @media (min-width: 62rem) {
   .site-header {
     height: 6rem;
+    padding: 0 var(--page-pad);
   }
 
   .site-header.is-scrolled {
@@ -1653,14 +1674,18 @@ fieldset {
     position: static;
     width: auto;
     height: auto;
+    max-width: none;
+    max-height: none;
     flex-direction: row;
     align-items: center;
     gap: 2rem;
     padding: 0;
+    overflow: visible;
     visibility: visible;
     opacity: 1;
     background: none;
     color: inherit;
+    pointer-events: auto;
     transition: none;
   }
 
@@ -1803,6 +1828,16 @@ fieldset {
   .detail-item {
     grid-template-columns: 3rem 1fr;
     padding: 2.6rem 0;
+  }
+}
+
+@media (max-width: 61.99rem) and (max-height: 36rem) {
+  .site-menu {
+    justify-content: flex-start;
+  }
+
+  .site-menu::after {
+    display: none;
   }
 }
 

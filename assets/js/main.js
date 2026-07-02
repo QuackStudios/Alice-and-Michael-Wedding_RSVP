@@ -12,28 +12,77 @@
   const header = document.querySelector("[data-header]");
   const menuButton = document.querySelector("[data-menu-button]");
   const menu = document.querySelector("[data-menu]");
+  const desktopMenu = window.matchMedia("(min-width: 62rem)");
   const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
-  function setMenu(open) {
+  function isMenuOpen() {
+    return menuButton?.getAttribute("aria-expanded") === "true";
+  }
+
+  function setMenu(open, { restoreFocus = false } = {}) {
     if (!menuButton || !menu) return;
     menuButton.setAttribute("aria-expanded", String(open));
     menuButton.querySelector(".menu-button__label").textContent = open ? "Close" : "Menu";
     menu.classList.toggle("is-open", open);
+    menu.setAttribute("aria-hidden", String(!open && !desktopMenu.matches));
     header?.classList.toggle("menu-active", open);
     document.body.classList.toggle("menu-open", open);
+
+    if (open || (restoreFocus && !desktopMenu.matches)) {
+      menuButton.focus({ preventScroll: true });
+    }
   }
 
   menuButton?.addEventListener("click", () => {
-    setMenu(menuButton.getAttribute("aria-expanded") !== "true");
+    const willOpen = !isMenuOpen();
+    setMenu(willOpen, { restoreFocus: !willOpen });
   });
 
   menu?.querySelectorAll("a").forEach((link) => {
-    link.addEventListener("click", () => setMenu(false));
+    link.addEventListener("click", () => {
+      if (isMenuOpen()) setMenu(false, { restoreFocus: true });
+    });
   });
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") setMenu(false);
+    if (event.key === "Escape" && isMenuOpen()) {
+      setMenu(false, { restoreFocus: true });
+      return;
+    }
+
+    if (event.key !== "Tab" || !isMenuOpen() || !header || !menuButton || !menu) return;
+
+    const focusableItems = [
+      header.querySelector(".wordmark"),
+      menuButton,
+      ...menu.querySelectorAll("a")
+    ].filter(Boolean);
+    const firstItem = focusableItems[0];
+    const lastItem = focusableItems[focusableItems.length - 1];
+
+    if (event.shiftKey && document.activeElement === firstItem) {
+      event.preventDefault();
+      lastItem.focus();
+    } else if (!event.shiftKey && document.activeElement === lastItem) {
+      event.preventDefault();
+      firstItem.focus();
+    } else if (!focusableItems.includes(document.activeElement)) {
+      event.preventDefault();
+      menuButton.focus();
+    }
   });
+
+  function syncMenuForViewport() {
+    if (desktopMenu.matches && isMenuOpen()) {
+      setMenu(false);
+      return;
+    }
+
+    menu?.setAttribute("aria-hidden", String(!desktopMenu.matches));
+  }
+
+  desktopMenu.addEventListener?.("change", syncMenuForViewport);
+  syncMenuForViewport();
 
   let scrollFrame;
   function updateOnScroll() {
