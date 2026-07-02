@@ -314,6 +314,13 @@ a {
   animation: hero-settle 1.7s var(--ease) both;
 }
 
+.hero__media picture,
+.gallery-image picture {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
 .hero__media img {
   width: 100%;
   height: 100%;

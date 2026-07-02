@@ -9,7 +9,15 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&amp;family=Manrope:wght@400;500;600&amp;display=swap" rel="stylesheet">
-  <link rel="preload" href="assets/images/hero-couple.jpg" as="image">
+  <link
+    rel="preload"
+    as="image"
+    href="assets/images/optimized/hero-couple-2000.webp"
+    imagesrcset="assets/images/optimized/hero-couple-640.webp 640w, assets/images/optimized/hero-couple-960.webp 960w, assets/images/optimized/hero-couple-1400.webp 1400w, assets/images/optimized/hero-couple-2000.webp 2000w, assets/images/optimized/hero-couple-2400.webp 2400w"
+    imagesizes="(max-aspect-ratio: 3/2) 150vh, 100vw"
+    type="image/webp"
+    fetchpriority="high"
+  >
   <link rel="stylesheet" href="assets/css/style.css">
   <script src="assets/js/main.js" defer></script>
 </head>
@@ -36,7 +44,21 @@
   <main id="main">
     <section class="hero" id="top" aria-labelledby="hero-title">
       <div class="hero__media" data-parallax>
-        <img src="hero-img-high-quality.jpg" width="1536" height="1024" alt="A couple walking together through a sunlit stone loggia">
+        <picture>
+          <source
+            type="image/webp"
+            srcset="assets/images/optimized/hero-couple-640.webp 640w, assets/images/optimized/hero-couple-960.webp 960w, assets/images/optimized/hero-couple-1400.webp 1400w, assets/images/optimized/hero-couple-2000.webp 2000w, assets/images/optimized/hero-couple-2400.webp 2400w"
+            sizes="(max-aspect-ratio: 3/2) 150vh, 100vw"
+          >
+          <img
+            src="assets/images/optimized/hero-couple-2000.webp"
+            width="2400"
+            height="1600"
+            alt="A bride and groom holding hands in front of a grand columned building"
+            decoding="async"
+            fetchpriority="high"
+          >
+        </picture>
       </div>
       <div class="hero__veil"></div>
       <div class="hero__content">
@@ -256,11 +278,43 @@
 
     <section class="editorial-gallery" aria-label="Wedding celebration inspiration">
       <figure class="gallery-main reveal">
-        <div class="gallery-image"><img src="couple-photo-landscape.jpg" width="1536" height="1024" loading="lazy" alt="An elegant courtyard arranged for a wedding ceremony"></div>
+        <div class="gallery-image">
+          <picture>
+            <source
+              type="image/webp"
+              srcset="assets/images/optimized/couple-landscape-640.webp 640w, assets/images/optimized/couple-landscape-960.webp 960w, assets/images/optimized/couple-landscape-1400.webp 1400w, assets/images/optimized/couple-landscape-2000.webp 2000w"
+              sizes="(max-width: 61.99rem) 92vw, 68vw"
+            >
+            <img
+              src="assets/images/optimized/couple-landscape-1400.webp"
+              width="2000"
+              height="1333"
+              loading="lazy"
+              decoding="async"
+              alt="A bride and groom embracing beside a sunlit lake beneath pine trees"
+            >
+          </picture>
+        </div>
         <figcaption><span>OUR STORY</span><span>Alice &amp; Michael</span></figcaption>
       </figure>
       <figure class="gallery-detail reveal">
-        <div class="gallery-image"><img src="couple-photo-portrait.jpg" width="1122" height="1402" loading="lazy" alt="An elegant reception table set with linen, ceramics and white flowers"></div>
+        <div class="gallery-image">
+          <picture>
+            <source
+              type="image/webp"
+              srcset="assets/images/optimized/couple-portrait-640.webp 640w, assets/images/optimized/couple-portrait-960.webp 960w, assets/images/optimized/couple-portrait-1400.webp 1400w"
+              sizes="(max-width: 61.99rem) 74vw, 27vw"
+            >
+            <img
+              src="assets/images/optimized/couple-portrait-960.webp"
+              width="1400"
+              height="2100"
+              loading="lazy"
+              decoding="async"
+              alt="A bride smiling up at the groom in a close portrait"
+            >
+          </picture>
+        </div>
         <figcaption><span>TOGETHER, ALWAYS</span><span>EST. 2020</span></figcaption>
       </figure>
     </section>
