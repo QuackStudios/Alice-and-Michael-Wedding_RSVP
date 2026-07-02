@@ -322,6 +322,13 @@ a {
   opacity: 80%;
 }
 
+@media (max-width: 1600px) {
+  .hero__media img {
+    object-position: 45% center !important;
+    object-fit: cover !important;
+  }
+}
+
 .hero__veil {
   background:
     linear-gradient(180deg, rgba(13, 16, 13, 0.42) 0%, transparent 35%, rgba(13, 16, 13, 0.08) 58%, rgba(13, 16, 13, 0.55) 100%),
