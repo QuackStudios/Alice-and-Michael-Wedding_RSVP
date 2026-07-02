@@ -316,10 +316,10 @@ a {
 
 .hero__media img {
   width: 100%;
-  height: 112%;
-  object-fit: cover;
+  height: 100%;
   object-position: 61% center;
   will-change: transform;
+  opacity: 80%;
 }
 
 .hero__veil {
