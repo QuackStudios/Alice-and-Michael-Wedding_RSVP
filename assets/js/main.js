@@ -1,6 +1,12 @@
 (() => {
   "use strict";
 
+  const documentRoot = document.documentElement;
+  documentRoot.classList.toggle(
+    "is-aligning-initial-hash",
+    Boolean(window.location.hash)
+  );
+
   const CONFIG = {
   demoMode: false,
   workerUrl: "https://wedding-rsvp-worker.andrew-94e.workers.dev"
@@ -104,32 +110,40 @@
   updateOnScroll();
 
   function alignInitialHash() {
-    if (!window.location.hash) return;
+    if (!window.location.hash) {
+      documentRoot.classList.remove("is-aligning-initial-hash");
+      return;
+    }
 
     let targetId;
     try {
       targetId = decodeURIComponent(window.location.hash.slice(1));
     } catch {
+      documentRoot.classList.remove("is-aligning-initial-hash");
       return;
     }
 
     const target = document.getElementById(targetId);
-    if (!target) return;
+    if (!target) {
+      documentRoot.classList.remove("is-aligning-initial-hash");
+      return;
+    }
 
     const anchorOffset = Number.parseFloat(
       window.getComputedStyle(target).scrollMarginTop
     ) || 0;
     const targetTop = target.getBoundingClientRect().top + window.scrollY - anchorOffset;
-    const previousScrollBehavior = document.documentElement.style.scrollBehavior;
+    const previousScrollBehavior = documentRoot.style.scrollBehavior;
 
-    document.documentElement.style.scrollBehavior = "auto";
+    documentRoot.style.scrollBehavior = "auto";
     window.scrollTo({
       top: Math.max(0, targetTop),
       left: 0,
       behavior: "auto"
     });
     window.requestAnimationFrame(() => {
-      document.documentElement.style.scrollBehavior = previousScrollBehavior;
+      documentRoot.style.scrollBehavior = previousScrollBehavior;
+      documentRoot.classList.remove("is-aligning-initial-hash");
     });
   }
 

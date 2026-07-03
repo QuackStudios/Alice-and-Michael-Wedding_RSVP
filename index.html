@@ -37,6 +37,7 @@
       <a href="#rsvp">RSVP</a>
       <a href="#day">The day</a>
       <a href="#details">Details</a>
+      <a href="#seating-list">Seating</a>
       <a class="site-menu__rsvp" href="#rsvp">RSVP</a>
     </nav>
   </header>
@@ -97,7 +98,7 @@
         </div>
         <p class="eyebrow">Kindly respond</p>
         <h2 id="rsvp-title">Will you be joining us?</h2>
-        <p>Enter the name exactly as it appears on your invitation. Your personal seating details will be waiting once your response is received.</p>
+        <p>Enter your name exactly as it appears on your invitation, then submit your RSVP. Your assigned table will appear instantly and be highlighted on the room map.</p>
         <div class="concierge-note">
           <span class="concierge-note__mark" aria-hidden="true">C</span>
           <div>
@@ -227,10 +228,32 @@
         <span>03</span>
         <p>The day</p>
       </div>
-      <div class="day__heading reveal">
-        <p class="eyebrow">Wedding timeline</p>
-        <h2 id="day-title">A day of celebration</h2>
-        <p>Please note: The morning ceremonies are for family and close relatives. We can’t wait to celebrate with everyone at the venue starting from 6:00 PM!</p>
+      <div class="day__feature">
+        <div class="day__heading reveal">
+          <p class="eyebrow">Wedding timeline</p>
+          <h2 id="day-title">A day of celebration</h2>
+          <p>Please note: The morning ceremonies are for family and close relatives. We can’t wait to celebrate with everyone at the venue starting from 6:00 PM!</p>
+        </div>
+        <figure class="section-photo day__photo reveal reveal--image">
+          <div class="section-photo__media">
+            <picture>
+              <source
+                type="image/webp"
+                srcset="assets/images/optimized/a-day-of-celebration-640.webp 640w, assets/images/optimized/a-day-of-celebration-960.webp 960w, assets/images/optimized/a-day-of-celebration-1400.webp 1400w, assets/images/optimized/a-day-of-celebration-2000.webp 2000w"
+                sizes="(max-width: 61.99rem) 90vw, 38vw"
+              >
+              <img
+                src="assets/images/optimized/a-day-of-celebration-960.webp"
+                width="2000"
+                height="3000"
+                loading="lazy"
+                decoding="async"
+                alt="Alice and Michael holding hands together in a flower garden"
+              >
+            </picture>
+          </div>
+          <figcaption><span>The celebration awaits</span><span>01</span></figcaption>
+        </figure>
       </div>
       <ol class="timeline reveal">
         <li>
@@ -277,7 +300,7 @@
     </section>
 
     <section class="editorial-gallery" aria-label="Wedding celebration inspiration">
-      <figure class="gallery-main reveal">
+      <figure class="gallery-main reveal reveal--image">
         <div class="gallery-image">
           <picture>
             <source
@@ -297,7 +320,7 @@
         </div>
         <figcaption><span>OUR STORY</span><span>Alice &amp; Michael</span></figcaption>
       </figure>
-      <figure class="gallery-detail reveal">
+      <figure class="gallery-detail reveal reveal--image">
         <div class="gallery-image">
           <picture>
             <source
@@ -328,6 +351,26 @@
         <p class="eyebrow">Before the celebration</p>
         <h2 id="details-title">A few details.</h2>
       </div>
+      <figure class="section-photo details__photo reveal reveal--image">
+        <div class="section-photo__media">
+          <picture>
+            <source
+              type="image/webp"
+              srcset="assets/images/optimized/a-few-details-640.webp 640w, assets/images/optimized/a-few-details-960.webp 960w, assets/images/optimized/a-few-details-1400.webp 1400w, assets/images/optimized/a-few-details-2000.webp 2000w"
+              sizes="(max-width: 61.99rem) 74vw, 30vw"
+            >
+            <img
+              src="assets/images/optimized/a-few-details-960.webp"
+              width="2000"
+              height="3000"
+              loading="lazy"
+              decoding="async"
+              alt="Alice and Michael smiling together behind a bouquet of white flowers"
+            >
+          </picture>
+        </div>
+        <figcaption><span>An evening together</span><span>02</span></figcaption>
+      </figure>
       <div class="detail-list">
         <article class="detail-item reveal">
           <span>01</span>
@@ -353,6 +396,285 @@
             <p>Your presence at our wedding is the greatest gift of all. However, should you wish to honour us with a gift, a wishing well will be available at the reception. Any contributions will help fund our dream honeymoon trip to Queenstown!</p>
           </div>
         </article>
+      </div>
+    </section>
+
+    <section class="seating-overview section" id="seating-list" aria-labelledby="seating-list-title">
+      <div class="seating-overview__heading">
+        <div class="section-marker reveal">
+          <span>05</span>
+          <p>Room layout</p>
+        </div>
+        <div class="seating-overview__intro reveal">
+          <p class="eyebrow">Find your place</p>
+          <h2 id="seating-list-title">Find Your Table</h2>
+          <p>Use this sample seating list to preview the room layout. To find your actual table for the evening, <a href="#rsvp">submit your RSVP above</a> and it will be revealed instantly.</p>
+        </div>
+      </div>
+
+      <div class="seating-overview__grid">
+        <figure class="floorplan-panel reveal">
+          <figcaption>
+            <span>Calibrated room plan</span>
+            <span>Landmark Restaurant</span>
+          </figcaption>
+          <div class="floorplan-panel__map">
+            <img
+              src="assets/seating/seating-layout-final-calibrated.svg"
+              width="595"
+              height="842"
+              loading="lazy"
+              decoding="async"
+              alt="Reception floorplan showing the Alice and Michael table and guest tables 1 through 25"
+            >
+          </div>
+        </figure>
+
+        <aside class="guest-list-panel reveal" aria-labelledby="guest-list-title">
+          <div class="guest-list-panel__heading">
+            <div>
+              <p class="eyebrow">Seating preview</p>
+              <h3 id="guest-list-title">Guest list by table</h3>
+            </div>
+            <span>104 guests</span>
+          </div>
+          <div class="guest-list-panel__scroll" tabindex="0" aria-label="Sample guest list grouped by table">
+            <article class="guest-table-group guest-table-group--head">
+              <header><h4>Alice &amp; Michael Table</h4><span>4 guests</span></header>
+              <ul>
+                <li>Alice</li>
+                <li>Michael</li>
+                <li>Bride’s Parents</li>
+                <li>Groom’s Parents</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 1</h4><span>4 guests</span></header>
+              <ul>
+                <li>Amelia Hart</li>
+                <li>Oliver Reed</li>
+                <li>Sophie Taylor</li>
+                <li>James Taylor</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 2</h4><span>4 guests</span></header>
+              <ul>
+                <li>Charlotte Nguyen</li>
+                <li>Ethan Nguyen</li>
+                <li>Isabella Clarke</li>
+                <li>Henry Clarke</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 3</h4><span>4 guests</span></header>
+              <ul>
+                <li>Grace Morgan</li>
+                <li>Lucas Morgan</li>
+                <li>Mia Bennett</li>
+                <li>Noah Bennett</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 4</h4><span>4 guests</span></header>
+              <ul>
+                <li>Ava Collins</li>
+                <li>William Collins</li>
+                <li>Ella Foster</li>
+                <li>Jack Foster</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 5</h4><span>4 guests</span></header>
+              <ul>
+                <li>Lily Anderson</li>
+                <li>Thomas Anderson</li>
+                <li>Ruby White</li>
+                <li>Samuel White</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 6</h4><span>4 guests</span></header>
+              <ul>
+                <li>Olivia Martin</li>
+                <li>Daniel Martin</li>
+                <li>Chloe Wilson</li>
+                <li>Benjamin Wilson</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 7</h4><span>4 guests</span></header>
+              <ul>
+                <li>Emily Harris</li>
+                <li>Jacob Harris</li>
+                <li>Zoe Turner</li>
+                <li>Matthew Turner</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 8</h4><span>4 guests</span></header>
+              <ul>
+                <li>Hannah Lee</li>
+                <li>Isaac Lee</li>
+                <li>Sarah Walker</li>
+                <li>Liam Walker</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 9</h4><span>4 guests</span></header>
+              <ul>
+                <li>Natalie King</li>
+                <li>Joshua King</li>
+                <li>Victoria Scott</li>
+                <li>Andrew Scott</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 10</h4><span>4 guests</span></header>
+              <ul>
+                <li>Emma Brown</li>
+                <li>Noah Brown</li>
+                <li>Ella Roberts</li>
+                <li>Mason Roberts</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 11</h4><span>4 guests</span></header>
+              <ul>
+                <li>Ava Thompson</li>
+                <li>Leo Thompson</li>
+                <li>Sophie Green</li>
+                <li>Oscar Green</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 12</h4><span>4 guests</span></header>
+              <ul>
+                <li>Lily Carter</li>
+                <li>Henry Carter</li>
+                <li>Ruby Evans</li>
+                <li>Jack Evans</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 13</h4><span>4 guests</span></header>
+              <ul>
+                <li>Mia Phillips</li>
+                <li>Lucas Phillips</li>
+                <li>Grace Edwards</li>
+                <li>Noah Edwards</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 14</h4><span>4 guests</span></header>
+              <ul>
+                <li>Charlotte Hughes</li>
+                <li>Ethan Hughes</li>
+                <li>Isabella Cooper</li>
+                <li>Thomas Cooper</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 15</h4><span>4 guests</span></header>
+              <ul>
+                <li>Amelia Richardson</li>
+                <li>Oliver Richardson</li>
+                <li>Emily Bailey</li>
+                <li>James Bailey</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 16</h4><span>4 guests</span></header>
+              <ul>
+                <li>Sophia Kelly</li>
+                <li>Daniel Kelly</li>
+                <li>Chloe Murphy</li>
+                <li>Benjamin Murphy</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 17</h4><span>4 guests</span></header>
+              <ul>
+                <li>Olivia Peterson</li>
+                <li>Jacob Peterson</li>
+                <li>Zoe Bennett</li>
+                <li>Matthew Bennett</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 18</h4><span>4 guests</span></header>
+              <ul>
+                <li>Hannah Campbell</li>
+                <li>Isaac Campbell</li>
+                <li>Sarah Mitchell</li>
+                <li>Liam Mitchell</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 19</h4><span>4 guests</span></header>
+              <ul>
+                <li>Natalie Parker</li>
+                <li>Joshua Parker</li>
+                <li>Victoria Young</li>
+                <li>Andrew Young</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 20</h4><span>4 guests</span></header>
+              <ul>
+                <li>Emma Hall</li>
+                <li>Noah Hall</li>
+                <li>Ella Adams</li>
+                <li>Mason Adams</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 21</h4><span>4 guests</span></header>
+              <ul>
+                <li>Ava Nelson</li>
+                <li>Leo Nelson</li>
+                <li>Sophie Hill</li>
+                <li>Oscar Hill</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 22</h4><span>4 guests</span></header>
+              <ul>
+                <li>Lily Wright</li>
+                <li>Henry Wright</li>
+                <li>Ruby Baker</li>
+                <li>Jack Baker</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 23</h4><span>4 guests</span></header>
+              <ul>
+                <li>Mia Allen</li>
+                <li>Lucas Allen</li>
+                <li>Grace Moore</li>
+                <li>Noah Moore</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 24</h4><span>4 guests</span></header>
+              <ul>
+                <li>Charlotte Ward</li>
+                <li>Ethan Ward</li>
+                <li>Isabella Cox</li>
+                <li>Thomas Cox</li>
+              </ul>
+            </article>
+            <article class="guest-table-group">
+              <header><h4>Table 25</h4><span>4 guests</span></header>
+              <ul>
+                <li>Amelia Gray</li>
+                <li>Oliver Gray</li>
+                <li>Emily Price</li>
+                <li>James Price</li>
+              </ul>
+            </article>
+          </div>
+        </aside>
       </div>
     </section>
   </main>
