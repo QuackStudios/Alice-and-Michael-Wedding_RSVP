@@ -103,6 +103,45 @@
   }, { passive: true });
   updateOnScroll();
 
+  function alignInitialHash() {
+    if (!window.location.hash) return;
+
+    let targetId;
+    try {
+      targetId = decodeURIComponent(window.location.hash.slice(1));
+    } catch {
+      return;
+    }
+
+    const target = document.getElementById(targetId);
+    if (!target) return;
+
+    const anchorOffset = Number.parseFloat(
+      window.getComputedStyle(target).scrollMarginTop
+    ) || 0;
+    const targetTop = target.getBoundingClientRect().top + window.scrollY - anchorOffset;
+    const previousScrollBehavior = document.documentElement.style.scrollBehavior;
+
+    document.documentElement.style.scrollBehavior = "auto";
+    window.scrollTo({
+      top: Math.max(0, targetTop),
+      left: 0,
+      behavior: "auto"
+    });
+    window.requestAnimationFrame(() => {
+      document.documentElement.style.scrollBehavior = previousScrollBehavior;
+    });
+  }
+
+  window.addEventListener("load", () => {
+    if (!window.location.hash) return;
+
+    const fontsReady = document.fonts?.ready || Promise.resolve();
+    fontsReady.then(() => {
+      window.setTimeout(alignInitialHash, 100);
+    });
+  });
+
   const revealItems = document.querySelectorAll(".reveal");
   if ("IntersectionObserver" in window && !prefersReducedMotion.matches) {
     const revealObserver = new IntersectionObserver((entries, observer) => {

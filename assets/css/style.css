@@ -9,6 +9,7 @@
   --serif: "Fraunces", Georgia, "Times New Roman", serif;
   --sans: "Manrope", "Helvetica Neue", Arial, sans-serif;
   --page-pad: clamp(1.25rem, 4vw, 4.75rem);
+  --anchor-offset: calc(4.4rem + env(safe-area-inset-top));
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -26,7 +27,6 @@ body {
 html {
   background: var(--paper);
   scroll-behavior: smooth;
-  scroll-padding-top: 5rem;
 }
 
 body {
@@ -80,6 +80,11 @@ a {
 
 [hidden] {
   display: none !important;
+}
+
+main[id],
+section[id] {
+  scroll-margin-top: var(--anchor-offset);
 }
 
 .skip-link {
@@ -618,6 +623,7 @@ a {
   grid-template-columns: 1fr;
   gap: 4rem;
   overflow: hidden;
+  overflow: clip;
   background: var(--ink);
   color: var(--chalk);
 }
@@ -1709,6 +1715,10 @@ fieldset {
 }
 
 @media (min-width: 62rem) {
+  :root {
+    --anchor-offset: 4.7rem;
+  }
+
   .site-header {
     height: 6rem;
     padding: 0 var(--page-pad);
