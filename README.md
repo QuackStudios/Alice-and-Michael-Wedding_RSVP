@@ -9,9 +9,14 @@ There is no React, npm, build command, database or front-end secret.
 ```text
 .
 ├── index.html
+├── find-table.html
 ├── assets/
-│   ├── css/style.css
-│   ├── js/main.js
+│   ├── css/
+│   │   ├── style.css
+│   │   └── find-table.css
+│   ├── js/
+│   │   ├── main.js
+│   │   └── find-table.js
 │   ├── images/
 │   └── seating/seating-layout-final-calibrated.svg
 ├── worker/worker.js
@@ -33,7 +38,7 @@ python3 -m http.server 8080
 
 Then visit `http://localhost:8080`.
 
-The top of `assets/js/main.js` contains the only front-end integration settings:
+The top of `assets/js/main.js` contains the RSVP integration settings:
 
 ```js
 const CONFIG = {
@@ -47,6 +52,33 @@ const CONFIG = {
 - Production mode deliberately fails closed if the Worker URL is still a placeholder; it never silently falls back to demo data.
 
 The form's hidden Wedding ID is `hart-brooks-2026`. It must equal the Worker's `WEDDING_ID`.
+
+## QR Seating Lookup Page
+
+The venue lookup page is available at `/find-table.html`. The wedding QR code
+should point directly to:
+
+```text
+https://quackstudios.github.io/Alice-and-Michael-Wedding_RSVP/find-table.html
+```
+
+This is a read-only guest flow. It searches GHL contacts by name through the
+Worker, lets the guest select a matching name, and reveals the assigned Table
+Number only as seating information. It does not submit or update RSVP status,
+dietary details, or any other contact data. The page uses the same calibrated
+seating map as the RSVP result and never displays email, phone, or internal
+seat-assignment details.
+
+Production lookup calls use the same Worker base URL configured in
+`assets/js/find-table.js` and send requests to `POST /search-guests` and
+`POST /lookup-guest-table`. GHL contacts must have the configured **Wedding ID**
+and **Table Number** populated. The Worker always uses its own `WEDDING_ID`
+environment variable; the public page cannot choose a different wedding.
+
+For speed, exact searches are cached only in the open page's memory, and the
+Worker keeps short-lived, bounded copies of the public search projection and
+verified table result in its warm isolate. Nothing is written to browser
+storage, and no full guest directory or private GHL contact payload is cached.
 
 ## 1. Prepare GoHighLevel
 

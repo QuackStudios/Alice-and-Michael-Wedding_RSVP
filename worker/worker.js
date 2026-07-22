@@ -55,6 +55,11 @@ const ALLOWED_DIETARY_REQUIREMENTS = new Set([
 const MAX_BODY_BYTES = 16_384;
 const FIELD_CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_CONTACTS_TO_HYDRATE = 20;
+const MAX_GUEST_SEARCH_RESULTS = 10;
+const MAX_CONTACT_ID_LENGTH = 200;
+const GUEST_SEARCH_CACHE_TTL_MS = 60 * 1000;
+const GUEST_TABLE_CACHE_TTL_MS = 2 * 60 * 1000;
+const MAX_GUEST_CACHE_ENTRIES = 100;
 const WEDDING_DATA_SAMPLE_LIMIT = 20;
 const CONTACT_HYDRATION_CONCURRENCY = 5;
 
@@ -63,6 +68,13 @@ let fieldCache = {
   expiresAt: 0,
   registry: null
 };
+
+// Warm-isolate caches contain only the same minimal data exposed by the two
+// public lookup routes. They are bounded, short-lived, and never contain raw
+// contacts, email, phone, dietary details, or RSVP data.
+const guestSearchCache = new Map();
+const guestSearchInFlight = new Map();
+const guestTableCache = new Map();
 
 export default {
   async fetch(request, env) {
@@ -104,6 +116,20 @@ export default {
         return json({ success: false, status: "forbidden", message: "Origin not allowed." }, 403, cors);
       }
       return handleRsvp(request, env, cors);
+    }
+
+    if (url.pathname === "/search-guests" && request.method === "POST") {
+      if (!isAllowedOrigin(request, env)) {
+        return json({ success: false, status: "forbidden", message: "Origin not allowed." }, 403, cors);
+      }
+      return handleGuestSearch(request, env, cors);
+    }
+
+    if (url.pathname === "/lookup-guest-table" && request.method === "POST") {
+      if (!isAllowedOrigin(request, env)) {
+        return json({ success: false, status: "forbidden", message: "Origin not allowed." }, 403, cors);
+      }
+      return handleGuestTableLookup(request, env, cors);
     }
 
     return json({ success: false, status: "not_found", message: "Not found." }, 404, cors);
@@ -382,6 +408,160 @@ async function handleDebugWeddingData(url, env, cors) {
   }
 }
 
+async function handleGuestSearch(request, env, cors) {
+  try {
+    assertEnvironment(env);
+
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return lookupError(
+        "invalid_request",
+        "Please send a valid name search.",
+        parsed.httpStatus,
+        cors
+      );
+    }
+
+    const raw = parsed.value;
+    const query = raw && typeof raw === "object" && !Array.isArray(raw) &&
+      typeof raw.query === "string"
+      ? normalizeName(raw.query)
+      : "";
+
+    if (query.length < 2) {
+      return lookupError(
+        "invalid_request",
+        "Please type at least 2 characters of your name.",
+        400,
+        cors
+      );
+    }
+
+    const cacheKey = guestSearchCacheKey(env, query);
+    const cachedMatches = readGuestCache(guestSearchCache, cacheKey);
+    if (cachedMatches !== null) {
+      return json({ success: true, matches: cachedMatches }, 200, cors);
+    }
+
+    let searchPromise = guestSearchInFlight.get(cacheKey);
+    if (!searchPromise) {
+      searchPromise = performGuestSearch(env, query);
+      guestSearchInFlight.set(cacheKey, searchPromise);
+    }
+
+    let matches;
+    try {
+      matches = await searchPromise;
+    } finally {
+      if (guestSearchInFlight.get(cacheKey) === searchPromise) {
+        guestSearchInFlight.delete(cacheKey);
+      }
+    }
+
+    return json({ success: true, matches }, 200, cors);
+  } catch (error) {
+    console.error("Guest seating search error:", safeErrorLabel(error));
+    return lookupError(
+      "service_error",
+      "Something went wrong. Please try again or ask the welcome team for help.",
+      lookupSafeHttpStatus(error),
+      cors
+    );
+  }
+}
+
+async function handleGuestTableLookup(request, env, cors) {
+  try {
+    assertEnvironment(env);
+
+    const parsed = await readJsonBody(request);
+    if (!parsed.ok) {
+      return lookupError(
+        "invalid_request",
+        "Please send a valid guest selection.",
+        parsed.httpStatus,
+        cors
+      );
+    }
+
+    const raw = parsed.value;
+    const contactId = raw && typeof raw === "object" && !Array.isArray(raw)
+      ? normalizeContactId(raw.contactId)
+      : "";
+
+    if (!contactId) {
+      return lookupError(
+        "invalid_request",
+        "Please select a guest from the search results.",
+        400,
+        cors
+      );
+    }
+
+    const cacheKey = guestTableCacheKey(env, contactId);
+    const cachedTable = readGuestCache(guestTableCache, cacheKey);
+    if (cachedTable !== null) {
+      return json({ success: true, ...cachedTable }, 200, cors);
+    }
+
+    const [fields, contact] = await Promise.all([
+      getCustomFieldRegistry(env),
+      fetchGhlContactById(env, contactId)
+    ]);
+    const weddingField = requireLookupField(fields, "Wedding ID");
+    const tableField = requireLookupField(fields, "Table Number");
+
+    if (!contact || !contactBelongsToConfiguredWedding(contact, weddingField, env)) {
+      return lookupError(
+        "not_found",
+        "We couldn’t find that guest. Please check the spelling or ask the welcome team for help.",
+        404,
+        cors
+      );
+    }
+
+    const displayName = guestDisplayName(contact);
+    if (!displayName) {
+      return lookupError(
+        "not_found",
+        "We couldn’t find that guest. Please check the spelling or ask the welcome team for help.",
+        404,
+        cors
+      );
+    }
+
+    const tableNumber = publicTableNumber(
+      getCustomFieldValue(contact, tableField)
+    );
+    if (!tableNumber) {
+      return lookupError(
+        "table_not_found",
+        "We found your name, but your table is not available yet. Please ask the welcome team for help.",
+        200,
+        cors
+      );
+    }
+
+    const publicResult = { displayName, tableNumber };
+    writeGuestCache(
+      guestTableCache,
+      cacheKey,
+      publicResult,
+      GUEST_TABLE_CACHE_TTL_MS
+    );
+
+    return json({ success: true, ...publicResult }, 200, cors);
+  } catch (error) {
+    console.error("Guest table lookup error:", safeErrorLabel(error));
+    return lookupError(
+      "service_error",
+      "Something went wrong. Please try again or ask the welcome team for help.",
+      lookupSafeHttpStatus(error),
+      cors
+    );
+  }
+}
+
 async function handleRsvp(request, env, cors) {
   try {
     assertEnvironment(env);
@@ -553,6 +733,16 @@ async function getCustomFieldRegistry(env, forceRefresh = false) {
   return registry;
 }
 
+function requireLookupField(fields, displayName) {
+  const field = fields?.byName?.[displayName];
+  if (!field?.id) {
+    throw new IntegrationConfigurationError(
+      `Missing required GHL custom field: ${displayName}`
+    );
+  }
+  return field;
+}
+
 function buildFieldResolutionSummary(fields) {
   const resolvedFields = fields?.byName || {};
   const fieldChecks = REQUIRED_FIELD_NAMES.map((displayName) => ({
@@ -709,6 +899,9 @@ function hasPlausibleSearchMatch(contacts, query, strategy) {
   if (strategy === "phone") {
     return contacts.some((contact) => phonesEquivalent(contact.phone, query));
   }
+  if (strategy === "guest_name_lookup") {
+    return contacts.some((contact) => contactNameMatchesQuery(contact, query));
+  }
 
   const normalizedQuery = normalizeName(query);
   return contacts.some((contact) => {
@@ -759,6 +952,309 @@ async function hydrateContact(env, summary) {
     }
     throw error;
   }
+}
+
+/**
+ * Guest-name search is deliberately separate from the RSVP matching path. It
+ * filters the GHL search summaries by name before requesting contact details,
+ * then stops as soon as the public result limit has been satisfied.
+ */
+async function performGuestSearch(env, query) {
+  const [fields, summaries] = await Promise.all([
+    getCustomFieldRegistry(env),
+    searchGuestContactSummaries(env, query)
+  ]);
+  const weddingField = requireLookupField(fields, "Wedding ID");
+  const tableField = requireLookupField(fields, "Table Number");
+  const contacts = await resolveGuestSearchContacts(
+    env,
+    summaries,
+    query,
+    weddingField
+  );
+  const matches = buildGuestSearchMatches(
+    contacts,
+    query,
+    weddingField,
+    env
+  );
+
+  primeGuestTableCache(contacts, weddingField, tableField, env);
+  writeGuestCache(
+    guestSearchCache,
+    guestSearchCacheKey(env, query),
+    matches,
+    GUEST_SEARCH_CACHE_TTL_MS
+  );
+  return matches;
+}
+
+async function searchGuestContactSummaries(env, query) {
+  let contacts = [];
+  let advancedFailed = false;
+
+  try {
+    const result = await ghlRequest(env, "/contacts/search", {
+      method: "POST",
+      debugSearchStrategy: "guest_name_lookup",
+      body: JSON.stringify({
+        locationId: env.GHL_LOCATION_ID,
+        page: 1,
+        pageLimit: 100,
+        query,
+        sort: [{ field: "dateAdded", direction: "desc" }]
+      })
+    });
+    contacts = extractContacts(result);
+    debugSearchCandidates(env, "guest_name_lookup", "advanced", contacts);
+  } catch (error) {
+    if (!(error instanceof GhlApiError) || ![400, 404, 422].includes(error.status)) {
+      throw error;
+    }
+    advancedFailed = true;
+    debugLog(env, "ghl_search_fallback", {
+      strategy: "guest_name_lookup",
+      advancedStatus: error.status
+    });
+  }
+
+  if (
+    contacts.length === 0 ||
+    advancedFailed ||
+    !hasPlausibleSearchMatch(contacts, query, "guest_name_lookup")
+  ) {
+    const params = new URLSearchParams({
+      locationId: env.GHL_LOCATION_ID,
+      query,
+      limit: "100"
+    });
+    const result = await ghlRequest(env, `/contacts/?${params.toString()}`, {
+      method: "GET",
+      debugSearchStrategy: "guest_name_lookup_legacy"
+    });
+    const legacyContacts = extractContacts(result);
+    debugSearchCandidates(env, "guest_name_lookup", "legacy", legacyContacts);
+    contacts = deduplicateContacts([...contacts, ...legacyContacts]);
+  }
+
+  return contacts;
+}
+
+async function resolveGuestSearchContacts(env, summaries, query, weddingField) {
+  const candidates = deduplicateContacts(summaries)
+    .filter((contact) => (
+      normalizeContactId(contact?.id) &&
+      guestDisplayName(contact) &&
+      contactNameMatchesQuery(contact, query)
+    ))
+    .sort((left, right) => (
+      guestNameMatchRank(left, query) - guestNameMatchRank(right, query) ||
+      guestDisplayName(left).localeCompare(
+        guestDisplayName(right),
+        "en-AU",
+        { sensitivity: "base" }
+      )
+    ))
+    .slice(0, MAX_CONTACTS_TO_HYDRATE);
+  const verified = [];
+
+  for (
+    let index = 0;
+    index < candidates.length && verified.length < MAX_GUEST_SEARCH_RESULTS;
+    index += CONTACT_HYDRATION_CONCURRENCY
+  ) {
+    const batch = candidates.slice(index, index + CONTACT_HYDRATION_CONCURRENCY);
+    const resolved = await Promise.all(batch.map((contact) => {
+      const weddingValue = getCustomFieldValue(contact, weddingField);
+      return hasDetectedValue(weddingValue)
+        ? contact
+        : hydrateContact(env, contact);
+    }));
+
+    for (const contact of resolved) {
+      if (
+        contactNameMatchesQuery(contact, query) &&
+        contactBelongsToConfiguredWedding(contact, weddingField, env)
+      ) {
+        verified.push(contact);
+      }
+    }
+  }
+
+  return verified;
+}
+
+function primeGuestTableCache(contacts, weddingField, tableField, env) {
+  for (const contact of contacts) {
+    if (!contactBelongsToConfiguredWedding(contact, weddingField, env)) continue;
+
+    const contactId = normalizeContactId(contact?.id);
+    const displayName = guestDisplayName(contact);
+    const tableNumber = publicTableNumber(getCustomFieldValue(contact, tableField));
+    if (!contactId || !displayName || !tableNumber) continue;
+
+    writeGuestCache(
+      guestTableCache,
+      guestTableCacheKey(env, contactId),
+      { displayName, tableNumber },
+      GUEST_TABLE_CACHE_TTL_MS
+    );
+  }
+}
+
+function guestSearchCacheKey(env, query) {
+  return JSON.stringify([
+    cleanText(env.GHL_LOCATION_ID, MAX_CONTACT_ID_LENGTH),
+    normalizeIdentifier(env.WEDDING_ID),
+    "search",
+    query
+  ]);
+}
+
+function guestTableCacheKey(env, contactId) {
+  return JSON.stringify([
+    cleanText(env.GHL_LOCATION_ID, MAX_CONTACT_ID_LENGTH),
+    normalizeIdentifier(env.WEDDING_ID),
+    "table",
+    contactId
+  ]);
+}
+
+function readGuestCache(cache, key) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return null;
+  }
+
+  cache.delete(key);
+  cache.set(key, entry);
+  return entry.value;
+}
+
+function writeGuestCache(cache, key, value, ttlMilliseconds) {
+  cache.delete(key);
+  cache.set(key, {
+    expiresAt: Date.now() + ttlMilliseconds,
+    value
+  });
+
+  while (cache.size > MAX_GUEST_CACHE_ENTRIES) {
+    cache.delete(cache.keys().next().value);
+  }
+}
+
+async function fetchGhlContactById(env, contactId) {
+  try {
+    const detail = await ghlRequest(
+      env,
+      `/contacts/${encodeURIComponent(contactId)}`,
+      { method: "GET" }
+    );
+    const contact = detail.contact || detail.data?.contact || detail;
+    if (!contact || typeof contact !== "object" || Array.isArray(contact)) {
+      return null;
+    }
+
+    const returnedContactId = normalizeContactId(contact.id);
+    if (returnedContactId && returnedContactId !== contactId) return null;
+    return contact;
+  } catch (error) {
+    if (error instanceof GhlApiError && [404, 422].includes(error.status)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function buildGuestSearchMatches(contacts, query, weddingField, env) {
+  const matches = [];
+  const seenContactIds = new Set();
+
+  for (const contact of contacts) {
+    const contactId = normalizeContactId(contact?.id);
+    if (!contactId || seenContactIds.has(contactId)) continue;
+    if (!contactBelongsToConfiguredWedding(contact, weddingField, env)) continue;
+    if (!contactNameMatchesQuery(contact, query)) continue;
+
+    const displayName = guestDisplayName(contact);
+    if (!displayName) continue;
+
+    seenContactIds.add(contactId);
+    matches.push({
+      contactId,
+      displayName,
+      rank: guestNameMatchRank(contact, query)
+    });
+  }
+
+  matches.sort((left, right) => (
+    left.rank - right.rank ||
+    left.displayName.localeCompare(right.displayName, "en-AU", { sensitivity: "base" })
+  ));
+
+  return matches
+    .slice(0, MAX_GUEST_SEARCH_RESULTS)
+    .map(({ contactId, displayName }) => ({ contactId, displayName }));
+}
+
+function contactBelongsToConfiguredWedding(contact, weddingField, env) {
+  const contactLocationId = cleanText(
+    contact?.locationId ?? contact?.location_id,
+    MAX_CONTACT_ID_LENGTH
+  );
+  const expectedLocationId = cleanText(env.GHL_LOCATION_ID, MAX_CONTACT_ID_LENGTH);
+  if (contactLocationId && contactLocationId !== expectedLocationId) return false;
+
+  const weddingValue = getCustomFieldValue(contact, weddingField);
+  return (
+    hasDetectedValue(weddingValue) &&
+    normalizeIdentifier(weddingValue) === normalizeIdentifier(env.WEDDING_ID)
+  );
+}
+
+function contactNameMatchesQuery(contact, query) {
+  const normalizedQuery = normalizeName(query);
+  if (!normalizedQuery) return false;
+
+  return guestNameForms(contact).some((name) => name.includes(normalizedQuery));
+}
+
+function guestNameMatchRank(contact, query) {
+  const normalizedQuery = normalizeName(query);
+  const forms = guestNameForms(contact);
+
+  if (forms.some((name) => name === normalizedQuery)) return 0;
+  if (forms.some((name) => name.startsWith(normalizedQuery))) return 1;
+  return 2;
+}
+
+function guestNameForms(contact) {
+  const firstName = cleanText(contact?.firstName, 80);
+  const lastName = cleanText(contact?.lastName, 80);
+  const fullName = `${firstName} ${lastName}`.trim();
+
+  return [...new Set([
+    normalizeName(firstName),
+    normalizeName(lastName),
+    normalizeName(fullName),
+    normalizeName(contact?.name)
+  ].filter(Boolean))];
+}
+
+function guestDisplayName(contact) {
+  const firstName = cleanText(contact?.firstName, 80);
+  const lastName = cleanText(contact?.lastName, 80);
+  return cleanText(`${firstName} ${lastName}`, 160) || cleanText(contact?.name, 160);
+}
+
+function publicTableNumber(value) {
+  if (Array.isArray(value)) {
+    return value.length === 1 ? publicTableNumber(value[0]) : "";
+  }
+  if (typeof value !== "string" && typeof value !== "number") return "";
+  return cleanText(value, 40);
 }
 
 function filterGuestCandidates(contacts, guest, fields, strategy, env) {
@@ -832,6 +1328,15 @@ function deduplicateContacts(contacts) {
 }
 
 function debugSearchCandidates(env, strategy, endpoint, contacts) {
+  if (strategy === "guest_name_lookup") {
+    debugLog(env, "ghl_search_results", {
+      strategy,
+      endpoint,
+      contactsReturned: contacts.length
+    });
+    return;
+  }
+
   debugLog(env, "ghl_search_results", {
     strategy,
     endpoint,
@@ -1215,6 +1720,16 @@ function guestSafeHttpStatus(error) {
   return 502;
 }
 
+function lookupSafeHttpStatus(error) {
+  if (error instanceof GhlApiError && error.status === 429) return 503;
+  if (error instanceof IntegrationConfigurationError) return 503;
+  return 502;
+}
+
+function lookupError(code, message, httpStatus, cors) {
+  return json({ success: false, code, message }, httpStatus, cors);
+}
+
 function safeErrorLabel(error) {
   if (error instanceof GhlApiError) return `GHL_${error.status}_${error.reason}`;
   if (error instanceof IntegrationConfigurationError) return "INTEGRATION_CONFIGURATION";
@@ -1255,6 +1770,19 @@ function cleanText(value, maxLength) {
 
 function normalizeName(value) {
   return cleanText(value, 100).toLocaleLowerCase("en-AU").normalize("NFKC");
+}
+
+function normalizeContactId(value) {
+  if (typeof value !== "string") return "";
+  const contactId = value.trim();
+  if (
+    !contactId ||
+    contactId.length > MAX_CONTACT_ID_LENGTH ||
+    /[\u0000-\u001f\u007f]/.test(contactId)
+  ) {
+    return "";
+  }
+  return contactId;
 }
 
 function normalizeEmail(value) {

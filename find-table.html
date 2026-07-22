@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en" class="lookup-document">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#17191a">
+  <meta name="description" content="Find your table for Alice and Michael’s wedding.">
+  <title>Find Your Table — Alice &amp; Michael</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://wedding-rsvp-worker.andrew-94e.workers.dev" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&amp;family=Manrope:wght@400;500;600&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <link rel="stylesheet" href="assets/css/find-table.css">
+  <script src="assets/js/find-table.js" defer></script>
+</head>
+<body class="lookup-page">
+  <a class="skip-link" href="#table-lookup">Skip to table search</a>
+
+  <header class="lookup-header">
+    <a class="lookup-brand" href="find-table.html" aria-label="Alice and Michael wedding seating, start again">
+      <span class="lookup-brand__names">Alice <em>&amp;</em> Michael</span>
+      <span class="lookup-brand__context">Table lookup</span>
+    </a>
+  </header>
+
+  <main class="lookup-main" id="table-lookup">
+    <div class="lookup-card">
+      <section class="lookup-search-view" data-search-view aria-labelledby="lookup-title">
+        <h1 id="lookup-title">Find your table</h1>
+        <p class="lookup-intro">Start typing your name, then select it from the list.</p>
+
+        <form class="lookup-form" data-search-form role="search" novalidate>
+          <label for="guest-name">Guest name</label>
+          <div class="lookup-input-wrap">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="10.8" cy="10.8" r="6.8"></circle>
+              <path d="m16 16 4.2 4.2"></path>
+            </svg>
+            <input
+              id="guest-name"
+              name="guestName"
+              type="search"
+              inputmode="search"
+              enterkeyhint="search"
+              autocomplete="off"
+              autocapitalize="words"
+              spellcheck="false"
+              maxlength="100"
+              placeholder="Type your name"
+              aria-autocomplete="list"
+              aria-controls="guest-results"
+              aria-expanded="false"
+              aria-describedby="lookup-hint"
+              data-name-input
+            >
+            <button class="lookup-clear" type="button" aria-label="Clear name" data-clear-search hidden>
+              <span aria-hidden="true">×</span>
+            </button>
+          </div>
+          <p class="lookup-hint" id="lookup-hint">Enter at least 2 characters.</p>
+
+          <div class="lookup-status" role="status" aria-live="polite" data-search-status hidden></div>
+          <div class="lookup-results" id="guest-results" role="listbox" aria-label="Matching guests" data-search-results hidden></div>
+        </form>
+      </section>
+
+      <section class="lookup-result-view" data-result-view aria-labelledby="table-result-title" hidden>
+        <p class="lookup-result-name" data-display-name></p>
+        <h1 id="table-result-title" tabindex="-1" data-table-message></h1>
+
+        <section class="seating-map lookup-map" data-seating-map-section aria-labelledby="lookup-map-title">
+          <div class="seating-map__heading">
+            <h2 id="lookup-map-title">Room plan</h2>
+            <p class="lookup-map__table">Table <span data-map-table-number>—</span></p>
+          </div>
+          <p class="seating-map__status" data-seating-map-status hidden></p>
+          <div class="seating-map__viewport" data-seating-map hidden>
+            <div class="seating-map__canvas" data-seating-map-canvas></div>
+          </div>
+        </section>
+
+        <button class="lookup-button lookup-button--secondary" type="button" data-search-again>
+          Search again
+        </button>
+      </section>
+    </div>
+  </main>
+
+  <footer class="lookup-footer">
+    <p>Having trouble? Please ask the welcome team for help.</p>
+  </footer>
+</body>
+</html>
