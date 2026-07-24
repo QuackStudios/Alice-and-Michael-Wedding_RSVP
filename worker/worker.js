@@ -9,6 +9,9 @@
  *   WEDDING_ID                     Variable: hart-brooks-2026 for this test
  *   ALLOWED_ORIGIN                 Variable: the exact public front-end origin
  *   DEBUG_KEY                      Optional secret: enables protected diagnostics/logs
+ *   SEATING_SYNC_KEY               Secret: protects the GHL-to-KV seating sync
+ *   SEATING_LOOKUP_ID_SECRET       Secret: creates stable opaque public lookup IDs
+ *   SEATING_LOOKUP                 KV binding: minimal QR seating directory
  *
  * GHL custom field IDs are intentionally NOT configured here. The Worker lists
  * the location's contact custom fields, resolves the seven required display
@@ -57,9 +60,15 @@ const FIELD_CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_CONTACTS_TO_HYDRATE = 20;
 const MAX_GUEST_SEARCH_RESULTS = 10;
 const MAX_CONTACT_ID_LENGTH = 200;
-const GUEST_SEARCH_CACHE_TTL_MS = 60 * 1000;
-const GUEST_TABLE_CACHE_TTL_MS = 2 * 60 * 1000;
-const MAX_GUEST_CACHE_ENTRIES = 100;
+const SEATING_DIRECTORY_SCHEMA_VERSION = 1;
+const SEATING_DIRECTORY_KV_CACHE_TTL_SECONDS = 60;
+const SEATING_DIRECTORY_MEMORY_TTL_MS = 30 * 1000;
+const SEATING_SYNC_PAGE_LIMIT = 100;
+const SEATING_SYNC_MAX_CONTACTS = 4_500;
+const SEATING_SYNC_MAX_PAGES = Math.ceil(
+  SEATING_SYNC_MAX_CONTACTS / SEATING_SYNC_PAGE_LIMIT
+) + 1;
+const MINIMUM_SEATING_SYNC_KEY_LENGTH = 24;
 const WEDDING_DATA_SAMPLE_LIMIT = 20;
 const CONTACT_HYDRATION_CONCURRENCY = 5;
 
@@ -69,12 +78,13 @@ let fieldCache = {
   registry: null
 };
 
-// Warm-isolate caches contain only the same minimal data exposed by the two
-// public lookup routes. They are bounded, short-lived, and never contain raw
-// contacts, email, phone, dietary details, or RSVP data.
-const guestSearchCache = new Map();
-const guestSearchInFlight = new Map();
-const guestTableCache = new Map();
+let seatingDirectoryCache = {
+  cacheKey: "",
+  expiresAt: 0,
+  directory: null
+};
+let seatingDirectoryLoadPromise = null;
+let seatingDirectoryLoadKey = "";
 
 export default {
   async fetch(request, env) {
@@ -111,6 +121,15 @@ export default {
       return handleDebugWeddingData(url, env, cors);
     }
 
+    if (
+      url.pathname === "/admin/sync-seating-lookup" &&
+      request.method === "POST"
+    ) {
+      const accessError = seatingSyncAccessError(request, env, cors);
+      if (accessError) return accessError;
+      return handleSeatingDirectorySync(env, cors);
+    }
+
     if (url.pathname === "/submit-rsvp" && request.method === "POST") {
       if (!isAllowedOrigin(request, env)) {
         return json({ success: false, status: "forbidden", message: "Origin not allowed." }, 403, cors);
@@ -133,6 +152,14 @@ export default {
     }
 
     return json({ success: false, status: "not_found", message: "Not found." }, 404, cors);
+  },
+
+  async scheduled(_controller, env, ctx) {
+    ctx.waitUntil(
+      syncSeatingDirectory(env).catch((error) => {
+        console.error("Scheduled seating sync error:", safeErrorLabel(error));
+      })
+    );
   }
 };
 
@@ -410,8 +437,6 @@ async function handleDebugWeddingData(url, env, cors) {
 
 async function handleGuestSearch(request, env, cors) {
   try {
-    assertEnvironment(env);
-
     const parsed = await readJsonBody(request);
     if (!parsed.ok) {
       return lookupError(
@@ -423,9 +448,19 @@ async function handleGuestSearch(request, env, cors) {
     }
 
     const raw = parsed.value;
+    if (
+      raw &&
+      typeof raw === "object" &&
+      !Array.isArray(raw) &&
+      raw.warm === true
+    ) {
+      await getSeatingDirectory(env);
+      return json({ success: true, ready: true, matches: [] }, 200, cors);
+    }
+
     const query = raw && typeof raw === "object" && !Array.isArray(raw) &&
       typeof raw.query === "string"
-      ? normalizeName(raw.query)
+      ? normalizeLookupText(raw.query)
       : "";
 
     if (query.length < 2) {
@@ -437,26 +472,8 @@ async function handleGuestSearch(request, env, cors) {
       );
     }
 
-    const cacheKey = guestSearchCacheKey(env, query);
-    const cachedMatches = readGuestCache(guestSearchCache, cacheKey);
-    if (cachedMatches !== null) {
-      return json({ success: true, matches: cachedMatches }, 200, cors);
-    }
-
-    let searchPromise = guestSearchInFlight.get(cacheKey);
-    if (!searchPromise) {
-      searchPromise = performGuestSearch(env, query);
-      guestSearchInFlight.set(cacheKey, searchPromise);
-    }
-
-    let matches;
-    try {
-      matches = await searchPromise;
-    } finally {
-      if (guestSearchInFlight.get(cacheKey) === searchPromise) {
-        guestSearchInFlight.delete(cacheKey);
-      }
-    }
+    const directory = await getSeatingDirectory(env);
+    const matches = searchSeatingDirectory(directory, query);
 
     return json({ success: true, matches }, 200, cors);
   } catch (error) {
@@ -472,8 +489,6 @@ async function handleGuestSearch(request, env, cors) {
 
 async function handleGuestTableLookup(request, env, cors) {
   try {
-    assertEnvironment(env);
-
     const parsed = await readJsonBody(request);
     if (!parsed.ok) {
       return lookupError(
@@ -485,11 +500,11 @@ async function handleGuestTableLookup(request, env, cors) {
     }
 
     const raw = parsed.value;
-    const contactId = raw && typeof raw === "object" && !Array.isArray(raw)
+    const lookupId = raw && typeof raw === "object" && !Array.isArray(raw)
       ? normalizeContactId(raw.contactId)
       : "";
 
-    if (!contactId) {
+    if (!lookupId) {
       return lookupError(
         "invalid_request",
         "Please select a guest from the search results.",
@@ -498,20 +513,10 @@ async function handleGuestTableLookup(request, env, cors) {
       );
     }
 
-    const cacheKey = guestTableCacheKey(env, contactId);
-    const cachedTable = readGuestCache(guestTableCache, cacheKey);
-    if (cachedTable !== null) {
-      return json({ success: true, ...cachedTable }, 200, cors);
-    }
+    const directory = await getSeatingDirectory(env);
+    const guest = directory.guests.find((entry) => entry.lookupId === lookupId);
 
-    const [fields, contact] = await Promise.all([
-      getCustomFieldRegistry(env),
-      fetchGhlContactById(env, contactId)
-    ]);
-    const weddingField = requireLookupField(fields, "Wedding ID");
-    const tableField = requireLookupField(fields, "Table Number");
-
-    if (!contact || !contactBelongsToConfiguredWedding(contact, weddingField, env)) {
+    if (!guest) {
       return lookupError(
         "not_found",
         "We couldn’t find that guest. Please check the spelling or ask the welcome team for help.",
@@ -520,20 +525,7 @@ async function handleGuestTableLookup(request, env, cors) {
       );
     }
 
-    const displayName = guestDisplayName(contact);
-    if (!displayName) {
-      return lookupError(
-        "not_found",
-        "We couldn’t find that guest. Please check the spelling or ask the welcome team for help.",
-        404,
-        cors
-      );
-    }
-
-    const tableNumber = publicTableNumber(
-      getCustomFieldValue(contact, tableField)
-    );
-    if (!tableNumber) {
+    if (!guest.tableNumber) {
       return lookupError(
         "table_not_found",
         "We found your name, but your table is not available yet. Please ask the welcome team for help.",
@@ -542,15 +534,11 @@ async function handleGuestTableLookup(request, env, cors) {
       );
     }
 
-    const publicResult = { displayName, tableNumber };
-    writeGuestCache(
-      guestTableCache,
-      cacheKey,
-      publicResult,
-      GUEST_TABLE_CACHE_TTL_MS
-    );
-
-    return json({ success: true, ...publicResult }, 200, cors);
+    return json({
+      success: true,
+      displayName: guest.displayName,
+      tableNumber: guest.tableNumber
+    }, 200, cors);
   } catch (error) {
     console.error("Guest table lookup error:", safeErrorLabel(error));
     return lookupError(
@@ -560,6 +548,524 @@ async function handleGuestTableLookup(request, env, cors) {
       cors
     );
   }
+}
+
+async function handleSeatingDirectorySync(env, cors) {
+  try {
+    const result = await syncSeatingDirectory(env);
+    return json({
+      success: true,
+      status: "synced",
+      syncedAt: result.syncedAt,
+      scannedContacts: result.scannedContacts,
+      guestCount: result.guestCount,
+      withTableCount: result.withTableCount,
+      withoutTableCount: result.withoutTableCount,
+      pagesRead: result.pagesRead
+    }, 200, cors);
+  } catch (error) {
+    console.error("Seating directory sync error:", safeErrorLabel(error));
+    return json({
+      success: false,
+      status: "sync_failed",
+      message: "The seating directory could not be refreshed. The previous directory was preserved."
+    }, lookupSafeHttpStatus(error), cors);
+  }
+}
+
+async function syncSeatingDirectory(env) {
+  assertEnvironment(env);
+  assertSeatingSyncConfiguration(env);
+
+  const fields = await getCustomFieldRegistry(env);
+  const weddingField = requireLookupField(fields, "Wedding ID");
+  const tableField = requireLookupField(fields, "Table Number");
+  const source = await listAllGhlContactsForSeating(env);
+  const lookupKey = await importSeatingLookupIdKey(env);
+  const guests = [];
+  const seenLookupIds = new Set();
+
+  for (const contact of source.contacts) {
+    if (!contactBelongsToConfiguredWedding(contact, weddingField, env)) continue;
+
+    const ghlContactId = normalizeContactId(contact?.id);
+    const displayName = guestDisplayName(contact);
+    const searchName = normalizeLookupText(displayName);
+    if (!ghlContactId || !displayName || !searchName) continue;
+
+    const lookupId = await createOpaqueSeatingLookupId(
+      lookupKey,
+      env,
+      ghlContactId
+    );
+    if (seenLookupIds.has(lookupId)) {
+      throw new SeatingDirectoryError("duplicate_lookup_id");
+    }
+    seenLookupIds.add(lookupId);
+
+    guests.push({
+      lookupId,
+      displayName,
+      searchName,
+      tableNumber: publicTableNumber(getCustomFieldValue(contact, tableField))
+    });
+  }
+
+  if (!guests.length) {
+    throw new SeatingDirectoryError("no_wedding_guests");
+  }
+
+  guests.sort((left, right) => (
+    left.displayName.localeCompare(right.displayName, "en-AU", { sensitivity: "base" }) ||
+    left.lookupId.localeCompare(right.lookupId)
+  ));
+
+  const syncedAt = new Date().toISOString();
+  const withTableCount = guests.filter((guest) => guest.tableNumber).length;
+  const snapshot = validateSeatingDirectory({
+    schemaVersion: SEATING_DIRECTORY_SCHEMA_VERSION,
+    locationId: cleanText(env.GHL_LOCATION_ID, MAX_CONTACT_ID_LENGTH),
+    weddingId: normalizeIdentifier(env.WEDDING_ID),
+    syncedAt,
+    guestCount: guests.length,
+    withTableCount,
+    guests
+  }, env);
+  const cacheKey = seatingDirectoryKvKey(env);
+
+  // This is the only write. A failed scan or validation never replaces the
+  // previous complete directory.
+  await env.SEATING_LOOKUP.put(cacheKey, JSON.stringify(snapshot));
+  setSeatingDirectoryMemoryCache(cacheKey, snapshot);
+
+  return {
+    syncedAt,
+    scannedContacts: source.contacts.length,
+    guestCount: guests.length,
+    withTableCount,
+    withoutTableCount: guests.length - withTableCount,
+    pagesRead: source.pagesRead
+  };
+}
+
+async function listAllGhlContactsForSeating(env) {
+  const contactsById = new Map();
+  const seenPageSignatures = new Set();
+  const seenCursors = new Set();
+  let startAfterId = "";
+  let startAfter = "";
+  let pagesRead = 0;
+  let complete = false;
+
+  for (let page = 0; page < SEATING_SYNC_MAX_PAGES; page += 1) {
+    const params = new URLSearchParams({
+      locationId: env.GHL_LOCATION_ID,
+      limit: String(SEATING_SYNC_PAGE_LIMIT)
+    });
+    if (startAfterId) params.set("startAfterId", startAfterId);
+    if (startAfter) params.set("startAfter", startAfter);
+
+    const result = await ghlRequest(env, `/contacts/?${params.toString()}`, {
+      method: "GET",
+      debugSearchStrategy: "seating_directory_sync"
+    });
+    if (!hasContactCollection(result)) {
+      throw new SeatingDirectoryError("invalid_contact_page");
+    }
+
+    const pageContacts = extractContacts(result);
+    pagesRead += 1;
+    if (!pageContacts.length) {
+      complete = true;
+      break;
+    }
+
+    const pageIds = pageContacts
+      .map((contact) => normalizeContactId(contact?.id))
+      .filter(Boolean);
+    const pageSignature = `${pageContacts.length}:${pageIds.join(",")}`;
+    if (seenPageSignatures.has(pageSignature)) {
+      throw new SeatingDirectoryError("repeated_contact_page");
+    }
+    seenPageSignatures.add(pageSignature);
+
+    for (const contact of pageContacts) {
+      const contactId = normalizeContactId(contact?.id);
+      if (contactId && !contactsById.has(contactId)) {
+        contactsById.set(contactId, contact);
+      }
+    }
+
+    const reportedTotal = extractContactTotal(result);
+    if (
+      contactsById.size > SEATING_SYNC_MAX_CONTACTS ||
+      (reportedTotal !== null && reportedTotal > SEATING_SYNC_MAX_CONTACTS)
+    ) {
+      throw new SeatingDirectoryError("contact_limit_exceeded");
+    }
+
+    if (
+      pageContacts.length < SEATING_SYNC_PAGE_LIMIT ||
+      (reportedTotal !== null && contactsById.size >= reportedTotal)
+    ) {
+      complete = true;
+      break;
+    }
+
+    const cursor = nextLegacyContactCursor(result, pageContacts.at(-1));
+    if (!cursor.startAfterId && !cursor.startAfter) {
+      throw new SeatingDirectoryError("missing_contact_cursor");
+    }
+    const cursorKey = `${cursor.startAfterId}|${cursor.startAfter}`;
+    if (seenCursors.has(cursorKey)) {
+      throw new SeatingDirectoryError("repeated_contact_cursor");
+    }
+    seenCursors.add(cursorKey);
+    startAfterId = cursor.startAfterId;
+    startAfter = cursor.startAfter;
+  }
+
+  if (!complete) {
+    throw new SeatingDirectoryError("contact_page_limit_exceeded");
+  }
+
+  return {
+    contacts: [...contactsById.values()],
+    pagesRead
+  };
+}
+
+function hasContactCollection(result) {
+  return (
+    Array.isArray(result?.contacts) ||
+    Array.isArray(result?.data?.contacts) ||
+    Array.isArray(result?.items)
+  );
+}
+
+function extractContactTotal(result) {
+  const candidates = [
+    result?.total,
+    result?.meta?.total,
+    result?.data?.total,
+    result?.data?.meta?.total
+  ];
+
+  for (const value of candidates) {
+    if (value == null || value === "") continue;
+    const total = Number(value);
+    if (Number.isInteger(total) && total >= 0) return total;
+  }
+  return null;
+}
+
+function nextLegacyContactCursor(result, lastContact) {
+  const meta = result?.meta || result?.data?.meta || {};
+  let nextPageUrl = "";
+  if (typeof meta.nextPageUrl === "string") nextPageUrl = meta.nextPageUrl;
+  if (!nextPageUrl && typeof result?.nextPageUrl === "string") {
+    nextPageUrl = result.nextPageUrl;
+  }
+
+  let urlCursorId = "";
+  let urlCursorAfter = "";
+  if (nextPageUrl) {
+    try {
+      const nextUrl = new URL(nextPageUrl, "https://cursor.invalid");
+      urlCursorId = nextUrl.searchParams.get("startAfterId") || "";
+      urlCursorAfter = nextUrl.searchParams.get("startAfter") || "";
+    } catch {
+      // Fall through to the documented cursor fields and final record.
+    }
+  }
+
+  const fallbackTimestamp = Date.parse(
+    lastContact?.dateAdded || lastContact?.dateUpdated || ""
+  );
+  return {
+    startAfterId: cleanText(
+      meta.startAfterId || result?.startAfterId || urlCursorId || lastContact?.id,
+      MAX_CONTACT_ID_LENGTH
+    ) || normalizeContactId(lastContact?.id),
+    startAfter: cleanText(
+      meta.startAfter ||
+        result?.startAfter ||
+        urlCursorAfter ||
+        (Number.isFinite(fallbackTimestamp) ? fallbackTimestamp : ""),
+      40
+    )
+  };
+}
+
+async function importSeatingLookupIdKey(env) {
+  return crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(String(env.SEATING_LOOKUP_ID_SECRET)),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+}
+
+async function createOpaqueSeatingLookupId(key, env, ghlContactId) {
+  const input = [
+    cleanText(env.GHL_LOCATION_ID, MAX_CONTACT_ID_LENGTH),
+    normalizeIdentifier(env.WEDDING_ID),
+    ghlContactId
+  ].join("|");
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(input)
+  );
+  const bytes = new Uint8Array(signature).slice(0, 18);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return `g_${btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}`;
+}
+
+async function getSeatingDirectory(env) {
+  assertSeatingDirectoryReadConfiguration(env);
+  const cacheKey = seatingDirectoryKvKey(env);
+  const now = Date.now();
+
+  if (
+    seatingDirectoryCache.directory &&
+    seatingDirectoryCache.cacheKey === cacheKey &&
+    seatingDirectoryCache.expiresAt > now
+  ) {
+    return seatingDirectoryCache.directory;
+  }
+
+  if (seatingDirectoryLoadPromise && seatingDirectoryLoadKey === cacheKey) {
+    return seatingDirectoryLoadPromise;
+  }
+
+  const lastKnownDirectory = seatingDirectoryCache.cacheKey === cacheKey
+    ? seatingDirectoryCache.directory
+    : null;
+  seatingDirectoryLoadKey = cacheKey;
+  seatingDirectoryLoadPromise = (async () => {
+    try {
+      const stored = await env.SEATING_LOOKUP.get(cacheKey, {
+        type: "json",
+        cacheTtl: SEATING_DIRECTORY_KV_CACHE_TTL_SECONDS
+      });
+      if (!stored) {
+        if (lastKnownDirectory) return lastKnownDirectory;
+        throw new SeatingDirectoryError("directory_not_ready");
+      }
+
+      const directory = validateSeatingDirectory(stored, env);
+      setSeatingDirectoryMemoryCache(cacheKey, directory);
+      return directory;
+    } catch (error) {
+      if (lastKnownDirectory) return lastKnownDirectory;
+      if (error instanceof SeatingDirectoryError) throw error;
+      throw new SeatingDirectoryError("directory_read_failed");
+    }
+  })();
+
+  try {
+    return await seatingDirectoryLoadPromise;
+  } finally {
+    if (seatingDirectoryLoadKey === cacheKey) {
+      seatingDirectoryLoadPromise = null;
+      seatingDirectoryLoadKey = "";
+    }
+  }
+}
+
+function setSeatingDirectoryMemoryCache(cacheKey, directory) {
+  seatingDirectoryCache = {
+    cacheKey,
+    expiresAt: Date.now() + SEATING_DIRECTORY_MEMORY_TTL_MS,
+    directory
+  };
+}
+
+function validateSeatingDirectory(value, env) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new SeatingDirectoryError("invalid_directory");
+  }
+
+  const allowedRootKeys = new Set([
+    "schemaVersion",
+    "locationId",
+    "weddingId",
+    "syncedAt",
+    "guestCount",
+    "withTableCount",
+    "guests"
+  ]);
+  if (Object.keys(value).some((key) => !allowedRootKeys.has(key))) {
+    throw new SeatingDirectoryError("unexpected_directory_field");
+  }
+  if (value.schemaVersion !== SEATING_DIRECTORY_SCHEMA_VERSION) {
+    throw new SeatingDirectoryError("unsupported_directory_schema");
+  }
+  if (
+    cleanText(value.locationId, MAX_CONTACT_ID_LENGTH) !==
+      cleanText(env.GHL_LOCATION_ID, MAX_CONTACT_ID_LENGTH) ||
+    normalizeIdentifier(value.weddingId) !== normalizeIdentifier(env.WEDDING_ID)
+  ) {
+    throw new SeatingDirectoryError("directory_namespace_mismatch");
+  }
+  if (!Number.isFinite(Date.parse(value.syncedAt)) || !Array.isArray(value.guests)) {
+    throw new SeatingDirectoryError("invalid_directory_metadata");
+  }
+  if (value.guests.length > SEATING_SYNC_MAX_CONTACTS) {
+    throw new SeatingDirectoryError("directory_guest_limit_exceeded");
+  }
+
+  const allowedGuestKeys = new Set([
+    "lookupId",
+    "displayName",
+    "searchName",
+    "tableNumber"
+  ]);
+  const seenLookupIds = new Set();
+  const guests = value.guests.map((guest) => {
+    if (!guest || typeof guest !== "object" || Array.isArray(guest)) {
+      throw new SeatingDirectoryError("invalid_directory_guest");
+    }
+    if (Object.keys(guest).some((key) => !allowedGuestKeys.has(key))) {
+      throw new SeatingDirectoryError("unexpected_guest_field");
+    }
+
+    const lookupId = normalizeContactId(guest.lookupId);
+    const displayName = cleanText(guest.displayName, 160);
+    const searchName = normalizeLookupText(guest.searchName);
+    const tableNumber = guest.tableNumber === ""
+      ? ""
+      : publicTableNumber(guest.tableNumber);
+    if (
+      !/^g_[A-Za-z0-9_-]{20,64}$/.test(lookupId) ||
+      !displayName ||
+      searchName !== normalizeLookupText(displayName) ||
+      seenLookupIds.has(lookupId)
+    ) {
+      throw new SeatingDirectoryError("invalid_directory_guest");
+    }
+    seenLookupIds.add(lookupId);
+    return { lookupId, displayName, searchName, tableNumber };
+  });
+  const withTableCount = guests.filter((guest) => guest.tableNumber).length;
+  if (
+    value.guestCount !== guests.length ||
+    value.withTableCount !== withTableCount
+  ) {
+    throw new SeatingDirectoryError("directory_count_mismatch");
+  }
+
+  return {
+    schemaVersion: SEATING_DIRECTORY_SCHEMA_VERSION,
+    locationId: cleanText(env.GHL_LOCATION_ID, MAX_CONTACT_ID_LENGTH),
+    weddingId: normalizeIdentifier(env.WEDDING_ID),
+    syncedAt: new Date(value.syncedAt).toISOString(),
+    guestCount: guests.length,
+    withTableCount,
+    guests
+  };
+}
+
+function searchSeatingDirectory(directory, query) {
+  return directory.guests
+    .map((guest) => {
+      const matchIndex = guest.searchName.indexOf(query);
+      if (matchIndex < 0) return null;
+      const words = guest.searchName.split(" ");
+      let rank = 4;
+      if (guest.searchName === query || words.some((word) => word === query)) {
+        rank = 0;
+      } else if (guest.searchName.startsWith(query)) {
+        rank = 1;
+      } else if (words.some((word) => word.startsWith(query))) {
+        rank = 2;
+      } else {
+        rank = 3;
+      }
+      return { guest, matchIndex, rank };
+    })
+    .filter(Boolean)
+    .sort((left, right) => (
+      left.rank - right.rank ||
+      left.matchIndex - right.matchIndex ||
+      left.guest.displayName.length - right.guest.displayName.length ||
+      left.guest.displayName.localeCompare(
+        right.guest.displayName,
+        "en-AU",
+        { sensitivity: "base" }
+      )
+    ))
+    .slice(0, MAX_GUEST_SEARCH_RESULTS)
+    .map(({ guest }) => ({
+      contactId: guest.lookupId,
+      displayName: guest.displayName
+    }));
+}
+
+function seatingDirectoryKvKey(env) {
+  return [
+    "seating-directory",
+    `v${SEATING_DIRECTORY_SCHEMA_VERSION}`,
+    encodeURIComponent(cleanText(env.GHL_LOCATION_ID, MAX_CONTACT_ID_LENGTH)),
+    encodeURIComponent(normalizeIdentifier(env.WEDDING_ID))
+  ].join(":");
+}
+
+function assertSeatingDirectoryReadConfiguration(env) {
+  if (
+    !cleanText(env.GHL_LOCATION_ID, MAX_CONTACT_ID_LENGTH) ||
+    !normalizeIdentifier(env.WEDDING_ID) ||
+    !env.SEATING_LOOKUP ||
+    typeof env.SEATING_LOOKUP.get !== "function"
+  ) {
+    throw new SeatingDirectoryError("directory_not_configured");
+  }
+}
+
+function assertSeatingSyncConfiguration(env) {
+  assertSeatingDirectoryReadConfiguration(env);
+  if (
+    typeof env.SEATING_LOOKUP.put !== "function" ||
+    String(env.SEATING_SYNC_KEY || "").length < MINIMUM_SEATING_SYNC_KEY_LENGTH ||
+    String(env.SEATING_LOOKUP_ID_SECRET || "").length < MINIMUM_SEATING_SYNC_KEY_LENGTH
+  ) {
+    throw new SeatingDirectoryError("sync_not_configured");
+  }
+}
+
+function seatingSyncAccessError(request, env, cors) {
+  try {
+    assertSeatingSyncConfiguration(env);
+  } catch {
+    return json({
+      success: false,
+      status: "sync_not_configured",
+      message: "Seating sync is not configured."
+    }, 503, cors);
+  }
+
+  const authorization = request.headers.get("authorization") || "";
+  const expected = `Bearer ${String(env.SEATING_SYNC_KEY)}`;
+  if (!constantTimeStringEqual(authorization, expected)) {
+    return json({
+      success: false,
+      status: "unauthorized",
+      message: "A valid seating sync key is required."
+    }, 401, cors);
+  }
+  return null;
+}
+
+function constantTimeStringEqual(left, right) {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return difference === 0;
 }
 
 async function handleRsvp(request, env, cors) {
@@ -899,10 +1405,6 @@ function hasPlausibleSearchMatch(contacts, query, strategy) {
   if (strategy === "phone") {
     return contacts.some((contact) => phonesEquivalent(contact.phone, query));
   }
-  if (strategy === "guest_name_lookup") {
-    return contacts.some((contact) => contactNameMatchesQuery(contact, query));
-  }
-
   const normalizedQuery = normalizeName(query);
   return contacts.some((contact) => {
     const fullName = contact.name || `${contact.firstName || ""} ${contact.lastName || ""}`;
@@ -954,251 +1456,6 @@ async function hydrateContact(env, summary) {
   }
 }
 
-/**
- * Guest-name search is deliberately separate from the RSVP matching path. It
- * filters the GHL search summaries by name before requesting contact details,
- * then stops as soon as the public result limit has been satisfied.
- */
-async function performGuestSearch(env, query) {
-  const [fields, summaries] = await Promise.all([
-    getCustomFieldRegistry(env),
-    searchGuestContactSummaries(env, query)
-  ]);
-  const weddingField = requireLookupField(fields, "Wedding ID");
-  const tableField = requireLookupField(fields, "Table Number");
-  const contacts = await resolveGuestSearchContacts(
-    env,
-    summaries,
-    query,
-    weddingField
-  );
-  const matches = buildGuestSearchMatches(
-    contacts,
-    query,
-    weddingField,
-    env
-  );
-
-  primeGuestTableCache(contacts, weddingField, tableField, env);
-  writeGuestCache(
-    guestSearchCache,
-    guestSearchCacheKey(env, query),
-    matches,
-    GUEST_SEARCH_CACHE_TTL_MS
-  );
-  return matches;
-}
-
-async function searchGuestContactSummaries(env, query) {
-  let contacts = [];
-  let advancedFailed = false;
-
-  try {
-    const result = await ghlRequest(env, "/contacts/search", {
-      method: "POST",
-      debugSearchStrategy: "guest_name_lookup",
-      body: JSON.stringify({
-        locationId: env.GHL_LOCATION_ID,
-        page: 1,
-        pageLimit: 100,
-        query,
-        sort: [{ field: "dateAdded", direction: "desc" }]
-      })
-    });
-    contacts = extractContacts(result);
-    debugSearchCandidates(env, "guest_name_lookup", "advanced", contacts);
-  } catch (error) {
-    if (!(error instanceof GhlApiError) || ![400, 404, 422].includes(error.status)) {
-      throw error;
-    }
-    advancedFailed = true;
-    debugLog(env, "ghl_search_fallback", {
-      strategy: "guest_name_lookup",
-      advancedStatus: error.status
-    });
-  }
-
-  if (
-    contacts.length === 0 ||
-    advancedFailed ||
-    !hasPlausibleSearchMatch(contacts, query, "guest_name_lookup")
-  ) {
-    const params = new URLSearchParams({
-      locationId: env.GHL_LOCATION_ID,
-      query,
-      limit: "100"
-    });
-    const result = await ghlRequest(env, `/contacts/?${params.toString()}`, {
-      method: "GET",
-      debugSearchStrategy: "guest_name_lookup_legacy"
-    });
-    const legacyContacts = extractContacts(result);
-    debugSearchCandidates(env, "guest_name_lookup", "legacy", legacyContacts);
-    contacts = deduplicateContacts([...contacts, ...legacyContacts]);
-  }
-
-  return contacts;
-}
-
-async function resolveGuestSearchContacts(env, summaries, query, weddingField) {
-  const candidates = deduplicateContacts(summaries)
-    .filter((contact) => (
-      normalizeContactId(contact?.id) &&
-      guestDisplayName(contact) &&
-      contactNameMatchesQuery(contact, query)
-    ))
-    .sort((left, right) => (
-      guestNameMatchRank(left, query) - guestNameMatchRank(right, query) ||
-      guestDisplayName(left).localeCompare(
-        guestDisplayName(right),
-        "en-AU",
-        { sensitivity: "base" }
-      )
-    ))
-    .slice(0, MAX_CONTACTS_TO_HYDRATE);
-  const verified = [];
-
-  for (
-    let index = 0;
-    index < candidates.length && verified.length < MAX_GUEST_SEARCH_RESULTS;
-    index += CONTACT_HYDRATION_CONCURRENCY
-  ) {
-    const batch = candidates.slice(index, index + CONTACT_HYDRATION_CONCURRENCY);
-    const resolved = await Promise.all(batch.map((contact) => {
-      const weddingValue = getCustomFieldValue(contact, weddingField);
-      return hasDetectedValue(weddingValue)
-        ? contact
-        : hydrateContact(env, contact);
-    }));
-
-    for (const contact of resolved) {
-      if (
-        contactNameMatchesQuery(contact, query) &&
-        contactBelongsToConfiguredWedding(contact, weddingField, env)
-      ) {
-        verified.push(contact);
-      }
-    }
-  }
-
-  return verified;
-}
-
-function primeGuestTableCache(contacts, weddingField, tableField, env) {
-  for (const contact of contacts) {
-    if (!contactBelongsToConfiguredWedding(contact, weddingField, env)) continue;
-
-    const contactId = normalizeContactId(contact?.id);
-    const displayName = guestDisplayName(contact);
-    const tableNumber = publicTableNumber(getCustomFieldValue(contact, tableField));
-    if (!contactId || !displayName || !tableNumber) continue;
-
-    writeGuestCache(
-      guestTableCache,
-      guestTableCacheKey(env, contactId),
-      { displayName, tableNumber },
-      GUEST_TABLE_CACHE_TTL_MS
-    );
-  }
-}
-
-function guestSearchCacheKey(env, query) {
-  return JSON.stringify([
-    cleanText(env.GHL_LOCATION_ID, MAX_CONTACT_ID_LENGTH),
-    normalizeIdentifier(env.WEDDING_ID),
-    "search",
-    query
-  ]);
-}
-
-function guestTableCacheKey(env, contactId) {
-  return JSON.stringify([
-    cleanText(env.GHL_LOCATION_ID, MAX_CONTACT_ID_LENGTH),
-    normalizeIdentifier(env.WEDDING_ID),
-    "table",
-    contactId
-  ]);
-}
-
-function readGuestCache(cache, key) {
-  const entry = cache.get(key);
-  if (!entry) return null;
-  if (entry.expiresAt <= Date.now()) {
-    cache.delete(key);
-    return null;
-  }
-
-  cache.delete(key);
-  cache.set(key, entry);
-  return entry.value;
-}
-
-function writeGuestCache(cache, key, value, ttlMilliseconds) {
-  cache.delete(key);
-  cache.set(key, {
-    expiresAt: Date.now() + ttlMilliseconds,
-    value
-  });
-
-  while (cache.size > MAX_GUEST_CACHE_ENTRIES) {
-    cache.delete(cache.keys().next().value);
-  }
-}
-
-async function fetchGhlContactById(env, contactId) {
-  try {
-    const detail = await ghlRequest(
-      env,
-      `/contacts/${encodeURIComponent(contactId)}`,
-      { method: "GET" }
-    );
-    const contact = detail.contact || detail.data?.contact || detail;
-    if (!contact || typeof contact !== "object" || Array.isArray(contact)) {
-      return null;
-    }
-
-    const returnedContactId = normalizeContactId(contact.id);
-    if (returnedContactId && returnedContactId !== contactId) return null;
-    return contact;
-  } catch (error) {
-    if (error instanceof GhlApiError && [404, 422].includes(error.status)) {
-      return null;
-    }
-    throw error;
-  }
-}
-
-function buildGuestSearchMatches(contacts, query, weddingField, env) {
-  const matches = [];
-  const seenContactIds = new Set();
-
-  for (const contact of contacts) {
-    const contactId = normalizeContactId(contact?.id);
-    if (!contactId || seenContactIds.has(contactId)) continue;
-    if (!contactBelongsToConfiguredWedding(contact, weddingField, env)) continue;
-    if (!contactNameMatchesQuery(contact, query)) continue;
-
-    const displayName = guestDisplayName(contact);
-    if (!displayName) continue;
-
-    seenContactIds.add(contactId);
-    matches.push({
-      contactId,
-      displayName,
-      rank: guestNameMatchRank(contact, query)
-    });
-  }
-
-  matches.sort((left, right) => (
-    left.rank - right.rank ||
-    left.displayName.localeCompare(right.displayName, "en-AU", { sensitivity: "base" })
-  ));
-
-  return matches
-    .slice(0, MAX_GUEST_SEARCH_RESULTS)
-    .map(({ contactId, displayName }) => ({ contactId, displayName }));
-}
-
 function contactBelongsToConfiguredWedding(contact, weddingField, env) {
   const contactLocationId = cleanText(
     contact?.locationId ?? contact?.location_id,
@@ -1212,35 +1469,6 @@ function contactBelongsToConfiguredWedding(contact, weddingField, env) {
     hasDetectedValue(weddingValue) &&
     normalizeIdentifier(weddingValue) === normalizeIdentifier(env.WEDDING_ID)
   );
-}
-
-function contactNameMatchesQuery(contact, query) {
-  const normalizedQuery = normalizeName(query);
-  if (!normalizedQuery) return false;
-
-  return guestNameForms(contact).some((name) => name.includes(normalizedQuery));
-}
-
-function guestNameMatchRank(contact, query) {
-  const normalizedQuery = normalizeName(query);
-  const forms = guestNameForms(contact);
-
-  if (forms.some((name) => name === normalizedQuery)) return 0;
-  if (forms.some((name) => name.startsWith(normalizedQuery))) return 1;
-  return 2;
-}
-
-function guestNameForms(contact) {
-  const firstName = cleanText(contact?.firstName, 80);
-  const lastName = cleanText(contact?.lastName, 80);
-  const fullName = `${firstName} ${lastName}`.trim();
-
-  return [...new Set([
-    normalizeName(firstName),
-    normalizeName(lastName),
-    normalizeName(fullName),
-    normalizeName(contact?.name)
-  ].filter(Boolean))];
 }
 
 function guestDisplayName(contact) {
@@ -1328,15 +1556,6 @@ function deduplicateContacts(contacts) {
 }
 
 function debugSearchCandidates(env, strategy, endpoint, contacts) {
-  if (strategy === "guest_name_lookup") {
-    debugLog(env, "ghl_search_results", {
-      strategy,
-      endpoint,
-      contactsReturned: contacts.length
-    });
-    return;
-  }
-
   debugLog(env, "ghl_search_results", {
     strategy,
     endpoint,
@@ -1723,6 +1942,7 @@ function guestSafeHttpStatus(error) {
 function lookupSafeHttpStatus(error) {
   if (error instanceof GhlApiError && error.status === 429) return 503;
   if (error instanceof IntegrationConfigurationError) return 503;
+  if (error instanceof SeatingDirectoryError) return 503;
   return 502;
 }
 
@@ -1733,6 +1953,9 @@ function lookupError(code, message, httpStatus, cors) {
 function safeErrorLabel(error) {
   if (error instanceof GhlApiError) return `GHL_${error.status}_${error.reason}`;
   if (error instanceof IntegrationConfigurationError) return "INTEGRATION_CONFIGURATION";
+  if (error instanceof SeatingDirectoryError) {
+    return `SEATING_DIRECTORY_${error.reason}`;
+  }
   return "UNEXPECTED_WORKER_ERROR";
 }
 
@@ -1749,6 +1972,14 @@ class IntegrationConfigurationError extends Error {
   constructor(message) {
     super(message);
     this.name = "IntegrationConfigurationError";
+  }
+}
+
+class SeatingDirectoryError extends Error {
+  constructor(reason) {
+    super("The seating directory is unavailable.");
+    this.name = "SeatingDirectoryError";
+    this.reason = String(reason || "unknown").toUpperCase();
   }
 }
 
@@ -1770,6 +2001,13 @@ function cleanText(value, maxLength) {
 
 function normalizeName(value) {
   return cleanText(value, 100).toLocaleLowerCase("en-AU").normalize("NFKC");
+}
+
+function normalizeLookupText(value) {
+  return cleanText(value, 160)
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
+    .toLocaleLowerCase("en-AU");
 }
 
 function normalizeContactId(value) {

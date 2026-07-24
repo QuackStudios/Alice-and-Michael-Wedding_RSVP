@@ -4,7 +4,7 @@
 }
 
 .lookup-page {
-  --lookup-bg: #17191a;
+  --lookup-bg: #48484852;
   --lookup-surface: #212425;
   --lookup-surface-active: #303435;
   --lookup-text: #f2f3f2;
@@ -291,6 +291,15 @@
   font-weight: 500;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.lookup-name-match {
+  padding: 0 0.08em;
+  border-radius: 1px;
+  background: #d7dcda;
+  color: var(--lookup-bg);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
 .lookup-result-option span:last-child {

@@ -62,23 +62,31 @@ should point directly to:
 https://quackstudios.github.io/Alice-and-Michael-Wedding_RSVP/find-table.html
 ```
 
-This is a read-only guest flow. It searches GHL contacts by name through the
-Worker, lets the guest select a matching name, and reveals the assigned Table
-Number only as seating information. It does not submit or update RSVP status,
-dietary details, or any other contact data. The page uses the same calibrated
-seating map as the RSVP result and never displays email, phone, or internal
-seat-assignment details.
+This is a read-only guest flow. It searches a minimal seating directory stored
+in Cloudflare Workers KV, lets the guest select a matching name, and reveals
+the assigned Table Number only as seating information. Searches match any
+two-or-more-character fragment of a name (`me`, `melia`, and `ia` all match
+`Amelia`) and visually mark the matching characters. It does not submit or
+update RSVP status, dietary details, or any other contact data. The page uses
+the same calibrated seating map as the RSVP result and never displays email,
+phone, or internal seat-assignment details.
 
 Production lookup calls use the same Worker base URL configured in
 `assets/js/find-table.js` and send requests to `POST /search-guests` and
-`POST /lookup-guest-table`. GHL contacts must have the configured **Wedding ID**
-and **Table Number** populated. The Worker always uses its own `WEDDING_ID`
-environment variable; the public page cannot choose a different wedding.
+`POST /lookup-guest-table`. The QR routes read only from Cloudflare KV; they do
+not call GHL for each search or selection. The main RSVP route remains directly
+connected to GHL.
 
-For speed, exact searches are cached only in the open page's memory, and the
-Worker keeps short-lived, bounded copies of the public search projection and
-verified table result in its warm isolate. Nothing is written to browser
-storage, and no full guest directory or private GHL contact payload is cached.
+The protected seating sync reads GHL and atomically replaces one complete KV
+snapshot containing only opaque lookup ID, display name, normalized search
+name, and Table Number. It never stores email, phone, seat number, dietary
+information, RSVP status, the GHL token, raw contacts, or public GHL contact
+IDs. The browser never downloads the directory and writes nothing to
+`localStorage`, IndexedDB, or a service worker.
+
+GHL contacts must have the configured **Wedding ID** populated and should have
+**Table Number** populated. The Worker always uses its own `WEDDING_ID`; public
+requests cannot choose another wedding.
 
 ## 1. Prepare GoHighLevel
 
@@ -205,6 +213,9 @@ Use `.env.example` as the name checklist:
 | `WEDDING_ID` | Variable | `hart-brooks-2026` |
 | `ALLOWED_ORIGIN` | Variable | Exact public origin, e.g. `https://account.github.io` |
 | `DEBUG_KEY` | Optional secret | Long random value enabling protected lookup diagnostics |
+| `SEATING_SYNC_KEY` | Secret | Long random value protecting the seating sync route |
+| `SEATING_LOOKUP_ID_SECRET` | Secret | A different random value used to create opaque lookup IDs |
+| `SEATING_LOOKUP` | KV binding | The Workers KV namespace containing the minimal seating directory |
 
 `ALLOWED_ORIGIN` accepts comma-separated origins if both a preview and custom domain are needed:
 
@@ -220,6 +231,44 @@ them. Debug output never includes the GHL token, field IDs or raw contact
 payloads.
 
 HighLevel's API is endpoint-versioned. The Worker sends `GHL_API_VERSION` as the `Version` header on every request, and `.env.example` starts with the version used by HighLevel's Private Integration examples. If the API tester for this sub-account explicitly requires a newer documented version, update this one Worker variable—never the front end.
+
+### Configure the fast seating directory
+
+The QR lookup requires a Workers KV namespace. This is separate from the GHL
+integration used by the main RSVP form.
+
+1. In Cloudflare, open **Storage & Databases → Workers KV** and create a
+   namespace such as `wedding-seating-lookup`.
+2. Open the existing Worker, then **Settings → Bindings → Add binding → KV
+   namespace**.
+3. Set the variable name to `SEATING_LOOKUP` and choose the namespace.
+4. Add `SEATING_SYNC_KEY` and `SEATING_LOOKUP_ID_SECRET` as two different
+   secrets. Each should be at least 24 characters. For example, generate each
+   separately with `openssl rand -hex 32`.
+5. Deploy the current `worker/worker.js`.
+6. Run the initial protected sync:
+
+```bash
+curl -X POST \
+  'https://wedding-rsvp-worker.andrew-94e.workers.dev/admin/sync-seating-lookup' \
+  -H 'Authorization: Bearer YOUR_SEATING_SYNC_KEY'
+```
+
+The response reports counts and a timestamp only. It never returns guest
+records. A sync builds and validates the complete snapshot before its single KV
+write, so a failed refresh preserves the last working directory.
+
+Run the sync after changing Wedding ID, guest names, or table assignments and
+again before guests arrive. The Worker also includes an optional scheduled
+handler; adding a Cloudflare Cron Trigger will refresh through the same safe
+sync process automatically. Workers KV is eventually consistent, so allow
+about 60 seconds for a new snapshot to become visible everywhere.
+
+The public page warms the Worker and KV snapshot while it loads, before a guest
+starts typing. A cold name search is therefore one edge lookup rather than a
+live GHL search. Consider a Cloudflare rate-limiting rule for the two public QR
+POST routes if the URL will be widely shared; do not use `ALLOWED_ORIGIN` as an
+authentication mechanism.
 
 ### Check `/health`
 

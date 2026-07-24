@@ -3,7 +3,7 @@
 
   const CONFIG = Object.freeze({
     workerUrl: "https://wedding-rsvp-worker.andrew-94e.workers.dev",
-    debounceMilliseconds: 120,
+    debounceMilliseconds: 80,
     requestTimeoutMilliseconds: 12000,
     searchCacheTtlMilliseconds: 5 * 60 * 1000,
     searchCacheMaximumEntries: 30
@@ -95,6 +95,8 @@
     resetLookup();
   });
 
+  warmLookupService();
+
   function scheduleSearch(delay) {
     window.clearTimeout(searchTimer);
     searchTimer = null;
@@ -112,7 +114,7 @@
     if (cachedMatches !== null) {
       if (cachedMatches.length) {
         hideSearchStatus();
-        renderMatches(cachedMatches);
+        renderMatches(cachedMatches, query);
       } else {
         clearResultOptions();
         setSearchStatus(NO_MATCH_MESSAGE);
@@ -144,7 +146,7 @@
       }
 
       hideSearchStatus();
-      renderMatches(matches);
+      renderMatches(matches, query);
     } catch (error) {
       if (sequence !== searchSequence || controller !== activeSearchController) return;
       if (error.name === "AbortError" && !controller.didTimeout) return;
@@ -199,7 +201,7 @@
     }
   }
 
-  function renderMatches(matches) {
+  function renderMatches(matches, query) {
     const fragment = document.createDocumentFragment();
 
     matches.forEach((match, index) => {
@@ -211,8 +213,9 @@
       button.className = "lookup-result-option";
       button.setAttribute("role", "option");
       button.setAttribute("aria-selected", "false");
+      button.setAttribute("aria-label", match.displayName);
       button.dataset.contactId = match.contactId;
-      name.textContent = match.displayName;
+      appendHighlightedName(name, match.displayName, query);
       arrow.textContent = "→";
       arrow.setAttribute("aria-hidden", "true");
       button.append(name, arrow);
@@ -233,6 +236,96 @@
     // Download and parse the static room plan while the guest chooses their
     // name, so the result screen can appear without a second visible wait.
     loadSeatingMap().catch(() => {});
+  }
+
+  function appendHighlightedName(container, displayName, query) {
+    const source = String(displayName || "");
+    const normalizedQuery = normalizeQuery(query);
+    const mapped = foldTextWithOffsets(source);
+    if (!source || !normalizedQuery || !mapped.folded.includes(normalizedQuery)) {
+      container.textContent = source;
+      return;
+    }
+
+    const ranges = [];
+    let searchFrom = 0;
+    while (searchFrom < mapped.folded.length) {
+      const matchIndex = mapped.folded.indexOf(normalizedQuery, searchFrom);
+      if (matchIndex < 0) break;
+      const firstOffset = mapped.offsets[matchIndex];
+      const lastOffset = mapped.offsets[matchIndex + normalizedQuery.length - 1];
+      if (firstOffset && lastOffset) {
+        ranges.push({ start: firstOffset.start, end: lastOffset.end });
+      }
+      searchFrom = matchIndex + normalizedQuery.length;
+    }
+
+    if (!ranges.length) {
+      container.textContent = source;
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    let cursor = 0;
+    ranges.forEach((range) => {
+      if (range.start > cursor) {
+        fragment.appendChild(document.createTextNode(source.slice(cursor, range.start)));
+      }
+      const mark = document.createElement("mark");
+      mark.className = "lookup-name-match";
+      mark.textContent = source.slice(range.start, range.end);
+      fragment.appendChild(mark);
+      cursor = range.end;
+    });
+    if (cursor < source.length) {
+      fragment.appendChild(document.createTextNode(source.slice(cursor)));
+    }
+    container.replaceChildren(fragment);
+  }
+
+  function foldTextWithOffsets(value) {
+    const source = String(value || "");
+    const offsets = [];
+    let folded = "";
+    let segments;
+
+    if (typeof Intl.Segmenter === "function") {
+      segments = [...new Intl.Segmenter("en-AU", { granularity: "grapheme" })
+        .segment(source)]
+        .map((entry) => ({ segment: entry.segment, index: entry.index }));
+    } else {
+      segments = [];
+      let index = 0;
+      for (const segment of source) {
+        segments.push({ segment, index });
+        index += segment.length;
+      }
+    }
+
+    segments.forEach(({ segment, index }) => {
+      const normalized = segment
+        .normalize("NFKD")
+        .replace(/\p{M}+/gu, "")
+        .toLocaleLowerCase("en-AU");
+      for (let offset = 0; offset < normalized.length; offset += 1) {
+        folded += normalized[offset];
+        offsets.push({ start: index, end: index + segment.length });
+      }
+    });
+
+    return { folded, offsets };
+  }
+
+  function warmLookupService() {
+    if (!CONFIG.workerUrl || CONFIG.workerUrl.includes("YOUR-WORKER")) return;
+
+    fetch(`${CONFIG.workerUrl.replace(/\/$/, "")}/search-guests`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ warm: true })
+    }).catch(() => {
+      // The visible search request will show a guest-friendly error if needed.
+    });
   }
 
   function handleResultKeydown(event, index) {
@@ -459,8 +552,10 @@
     return String(value || "")
       .trim()
       .replace(/\s+/g, " ")
+      .normalize("NFKD")
+      .replace(/\p{M}+/gu, "")
       .toLocaleLowerCase("en-AU")
-      .normalize("NFKC");
+      .slice(0, 160);
   }
 
   function normalizeTableNumber(value) {
